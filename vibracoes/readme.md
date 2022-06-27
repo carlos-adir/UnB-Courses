@@ -1,11 +1,11 @@
 # Vibrações
 
-#### Abstract
+## Abstract
 
 This folder containts codes made for vibrations. 
 Briefly, the easier **DOE**(Differential Ordinary Equation) in vibrations are given by
 
-<img src="https://latex.codecogs.com/svg.image?\inline&space;\bg{white}m&space;\ddot{x}&space;&plus;&space;c&space;\dot{x}&space;&plus;&space;k&space;x&space;=&space;f" title="https://latex.codecogs.com/svg.image?\inline \bg{white}m \ddot{x} + c \dot{x} + k x = f" />
+<img src="https://latex.codecogs.com/png.image?\inline&space;\dpi{150}\bg{white}m&space;\ddot{x}&space;&plus;&space;c&space;\dot{x}&space;&plus;&space;k&space;x&space;=&space;f" title="https://latex.codecogs.com/png.image?\inline \dpi{150}\bg{white}m \ddot{x} + c \dot{x} + k x = f" />
 
 Then
 
@@ -17,12 +17,12 @@ Then
 
 Some documents are written in English (indicated with ```EN```) and others are in Portuguese (```BR```).
 
-#### Resumo
+## Resumo
 
 Essa pasta contém códigos feitos para vibrações.
 Em resumo, a **EDO**(Equação Diferencial Ordinária) em vibrações é dada por
 
-<img src="https://latex.codecogs.com/svg.image?\inline&space;\bg{white}m&space;\ddot{x}&space;&plus;&space;c&space;\dot{x}&space;&plus;&space;k&space;x&space;=&space;f" title="https://latex.codecogs.com/svg.image?\inline \bg{white}m \ddot{x} + c \dot{x} + k x = f" />
+<img src="https://latex.codecogs.com/png.image?\inline&space;\dpi{150}\bg{white}m&space;\ddot{x}&space;&plus;&space;c&space;\dot{x}&space;&plus;&space;k&space;x&space;=&space;f" title="https://latex.codecogs.com/png.image?\inline \dpi{150}\bg{white}m \ddot{x} + c \dot{x} + k x = f" />
 
 Então
 
