@@ -12,7 +12,7 @@ Then
 * We solve it using numerical methods
     * Runge-Kutta
     * Generalized-Finite-Difference
-* Appliable to ```n``` Degrees Of Freedom.
+* Applicable to ```n``` Degrees Of Freedom.
 * We do the analysis of stability of a given system
 
 Some documents are written in English (indicated with ```EN```) and others are in Portuguese (```BR```).
