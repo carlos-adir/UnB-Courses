@@ -1,26 +1,4 @@
-LabVIEW Measurement	
-Writer_Version	2
-Reader_Version	2
-Separator	Tab
-Decimal_Separator	.
-Multi_Headings	No
-X_Columns	One
-Time_Pref	Absolute
-Operator	AlunosGDS-JT
-Date	2019/08/27
-Time	10:30:32.0041797999998807947
-***End_of_Header***	
-	
-Channels	3			
-Samples	4108	4108	4108	
-Date	2019/08/27	2019/08/27	2019/08/27	
-Time	10:30:32.0041797999998807947	10:30:32.0041797999998807947	10:30:32.0041797999998807947	
-Y_Unit_Label	g	g	Newtons	
-X_Dimension	Time	Time	Time	
-X0	0.0000000000000000E+0	0.0000000000000000E+0	0.0000000000000000E+0	
-Delta_X	0.000605	0.000605	0.000605	
-***End_of_Header***				
-X_Value	Accel_Ref (Trigger)	Accel_Mes (Trigger)	Force (Trigger)	Comment
+
 0.000000	30.185373	0.022916	-0.171892
 0.000605	30.184730	-0.016917	-0.026698
 0.001211	30.185067	0.030865	-0.174600
