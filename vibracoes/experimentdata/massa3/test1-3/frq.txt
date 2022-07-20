@@ -1,27 +1,4 @@
-LabVIEW Measurement	
-Writer_Version	2
-Reader_Version	2
-Separator	Tab
-Decimal_Separator	.
-Multi_Headings	No
-X_Columns	One
-Time_Pref	Relative
-Operator	AlunosGDS-JT
-Date	2019/08/27
-Time	10:30:39.2551846504211425781
-***End_of_Header***	
-	
-Notes	X values guaranteed valid only for Accel_Mes (PSD)				
-Channels	4				
-Samples	2054	2054	2054	2054	
-Date	2019/08/27	2019/08/27	2019/08/27	2019/08/27	
-Time	10:30:39.2551846504211425781	10:30:39.2551846504211425781	10:30:39.2551846504211425781	10:30:39.2551846504211425781	
-Y_Unit_Label	g	Newtons			
-X_Dimension	Time	Time	Time	Time	
-X0	0.0000000000000000E+0	0.0000000000000000E+0	0.0000000000000000E+0	0.0000000000000000E+0	
-Delta_X	0.402048	0.402048	1.000000	1.000000	
-***End_of_Header***					
-X_Value	Accel_Mes (PSD)	Force (PSD)	Untitled	Untitled 1	Comment
+
 0.000000	5.358394E-6	0.008426	1.022366E-5	3.141593
 0.402048	7.272254E-6	0.009025	8.512624E-5	-3.095713
 0.804096	9.943714E-6	0.024203	0.000159	-3.062872
