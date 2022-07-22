@@ -1,7 +1,8 @@
 import numpy as np
 import sympy as sp
-from typing import Iterable, Any, Tuple
+from typing import Iterable, Any, Tuple, Optional
 from matplotlib import pyplot as plt
+import sys
 
 def solution_underdamped(xi:float, wn:float, t: Any, x0:float, v0:float):
     mu = np.sqrt(1-xi**2)
@@ -61,6 +62,7 @@ def getMB(tvals: np.ndarray, xvals: np.ndarray, Xj: np.ndarray):
     ddL[3, 3] = - ddL[2, 2]
     
     weight = np.ones(len(tvals))
+    weight /= np.sum(weight)
     
     W = np.diag(weight)
     M = dL @ W @ dL.T - ddL @ W @ xvals + ddL @ W @ L
@@ -134,7 +136,7 @@ def transform_Z2X(Z: Tuple[float]) -> Tuple[float]:
 def compute_residuo(tvals: Iterable[float], xvals: Iterable[float], X):
     xi, wn, x0, v0 = transform_X2Z(X)
     xtest = solution_x(xi, wn, x0, v0)(tvals)
-    return np.linalg.norm(xtest - xvals)
+    return np.linalg.norm(xtest - xvals)/len(tvals)
 
 def filter(xvalues: np.ndarray):
     n = len(xvalues)
@@ -148,50 +150,67 @@ def filter(xvalues: np.ndarray):
         xfiltered[i] = np.mean(xvalues[i:])
     return xfiltered
 
-def getXResiduoMinimal(tsample: Iterable[float], xsample: Iterable[float], ndiv = 8):
+def getXResiduoMinimal(tsample: Iterable[float], xsample: Iterable[float], ndiv: Optional[int]= 128):
     tsample = np.array(tsample)
     xsample = np.array(xsample)
     X = find_initial_vector(tsample, xsample)
+    if ndiv is None:
+        return X
+    Z = transform_X2Z(X)
     residuals = {}
-    wxs = np.linspace(0.9, 1.1, ndiv+1) * X[2]
-    wds = np.linspace(0.9, 1.1, ndiv+1) * X[3]
+
+    wn = Z[1]
+    xis = np.linspace(1e-9, 0.2, ndiv+1)
+    mus = np.sqrt(1-xis**2)
+    wns = np.linspace(0.5*wn, 3*wn, ndiv+1)
+    wxs = -xis*wns
+    wds = mus*wns
 
     for wx in wxs:
         for wd in wds:
-            X[2:] = wx, wd
+            A, B = get_initial_AB(tsample, xsample, wx, wd)
+            X[:] = (A, B, wx, wd)
             residuo = compute_residuo(tsample, xsample, X)
             residuals[residuo] = np.copy(X)
-    return residuals[min(residuals.keys())]
+    residuo = min(residuals.keys())
+    Xmin = residuals[residuo]
+    Zmin = transform_X2Z(Xmin)
+    print("    Initial Parameters")
+    print("        Xmin = ", Xmin)
+    print("        Zmin = ", Zmin)
+    print("     residuo = ", residuo)
+    return Xmin
 
 
 def LeastSquare(tsample: Iterable[float], xsample: Iterable[float], tolerance=1e-6, nitermax = 100, verbose=False):
     tsample = np.array(tsample)
     xsample = np.array(xsample)
     X = getXResiduoMinimal(tsample, xsample)
+    residuals = {}
     oldresiduo = 0
     if verbose:
-        print(" ---- Begin ---- ")
+        print("     ---- Begin ---- ")
     try:
         for niter in range(nitermax):
             residuo = compute_residuo(tsample, xsample, X)
+            residuals[residuo] = np.copy(X)
             if verbose:
-                print("    X%d = " % niter, X)
-                print("    Z%d = " % niter, transform_X2Z(X))
+                print("        X%d = " % niter, X)
+                print("        Z%d = " % niter, transform_X2Z(X))
                 print("    Residuo = ", residuo)
             if np.abs(residuo - oldresiduo) < tolerance:
                 break
             oldresiduo = residuo
             M, B = getMB(tsample, xsample, X)
-            oldX = np.copy(X)
             X -= np.linalg.solve(M, B)
     except Exception as e:
-        print("Least Square didn't converge")
-        return oldX
-    return X
+        print("    Problem in LeastSquares.")
+    residualmin = min(residuals.keys())
+    return residuals[residualmin]
 
 def findparameters(tsample: Iterable[float], xsample: Iterable[float]):
     tsample = np.array(tsample)
-    X = LeastSquare(tsample, xsample, tolerance=1e-12, verbose=True)
+    X = LeastSquare(tsample, xsample, tolerance=1e-12, verbose=False)
     Z = transform_X2Z(X)
     return Z
 
@@ -207,43 +226,49 @@ def readlines(filename: str) -> np.ndarray:
     return np.array(alllines)
 
 
+def print_all_parameters(directory: str):
+    folders = {"massa1/": ["test1-1/"],
+               "massa2/": ["test1-2/", "test2-2/", "test3-2/"],
+               "massa3/": ["test1-3/", "test2-3/"],
+               "massa4/": ["test1-4/", "test2-4/", "test3-4/"]}
+    for folder, testes in folders.items():
+        for teste in testes:
+            timecutoff = 0.1
+            filename = "tps.txt"
+            completefilename = directory + folder + teste + filename
+            print("For file: " + completefilename)
+            data = readlines(completefilename)
+            time = np.array(data[:, 0])
+            amesured = np.array(data[:, 2])
+            index = np.where(time < timecutoff)[0][-1]
+            Z = findparameters(time[index:], amesured[index:])
+            xi, wn, x0, v0 = Z
+            print("        Parameters = ")
+            print("            xi = %.6f" % xi)
+            print("            wn = %.6f" % wn)
+            print("        residu = %.6f" % compute_residuo(time[index:], amesured[index:], transform_Z2X(Z)))
+
+def plot_curves(completefilename: str):
+    print("For file: " + completefilename)
+    timecutoff = 0.1
+    data = readlines(completefilename)
+    time = np.array(data[:, 0])
+    amesured = np.array(data[:, 2])
+    index = np.where(time < timecutoff)[0][-1]
+    Z = findparameters(time[index:], amesured[index:])
+    xi, wn, x0, v0 = Z
+    print("        Parameters = ")
+    print("            xi = %.6f" % xi)
+    print("            wn = %.6f" % wn)
+    print("        residu = %.6e" % compute_residuo(time[index:], amesured[index:], transform_Z2X(Z)))
+    plt.scatter(time, amesured, marker=".", color="b", label="Valores lidos")
+    plt.plot(time, solution_x(xi, wn, x0, v0)(time), color="r", label="Curva estimada")
+    plt.legend()
+    plt.show()
+
 if __name__ == "__main__":
-    folders = {"massa1/": [("test1-1/", 0.1)],
-               "massa2/": [("test1-2/", 0.1), ("test2-2/", 0.1), ("test3-2/", 0.3)],
-               "massa3/": [("test1-3/", 0.3), ("test2-3/", 0.3)],
-               "massa4/": [("test1-4/", 0.3), ("test2-4/", 0.3), ("test3-4/)", 0.3)]}
-    try:
-        for folder, testes in folders.items():
-            for teste, timecutoff in testes:
-                # filename = "frq.txt"
-                # filename = "mfc.txt"
-                filename = "tps.txt"
-                completefilename = folder + teste + filename
-                print("For file: " + completefilename)
-                data = readlines(completefilename)
-                time = np.array(data[:, 0])
-                amesured = np.array(data[:, 2])
-                index = np.where(time < timecutoff)[0][-1]
-                Z = findparameters(time[index:], amesured[index:])
-                xi, wn, x0, v0 = Z
-                print("    Parameters = ")
-                print("    cutoff = %.2f" % timecutoff)
-                print("        xi = %.6f" % xi)
-                print("        wn = %.6f" % wn)
-                print("        x0 = %.6f" % x0)
-                print("        v0 = %.6f" % v0)
-                print("    residu = %.6f" % compute_residuo(time[index:], amesured[index:], transform_Z2X(Z)))
-    except Exception as e:
-        print(e)
-        aestimated = solution_x(xi, wn, x0, v0)(time)
-        print("Error: ")
-        # plt.plot(data[:, 0], data[:, 1], color="r", label="1")
-        plt.plot(time, amesured, color="b", ls="dotted", label="Mesured")
-        plt.plot(time, aestimated, color="r", label="Estimated")
-        # # plt.plot(data[:, 0], data[:, 3], color="g", label="3")
-        plt.legend()
-        plt.title(completefilename)
-        plt.xlabel("Tempo $t$ (s)")
-        plt.show()
-        raise e
+    directory = sys.argv[0].replace("treat_experimental_data.py", "")
+    print_all_parameters(directory)
+    plot_curves(directory + "massa1/test1-1/tps.txt")
+    
     
