@@ -2,11 +2,9 @@ import numpy as np
 import sympy as sp
 from typing import Iterable, Any, Tuple, Optional, Dict
 from matplotlib import pyplot as plt
+from matplotlib import cm
 import os, sys
-
-
-
-    
+from ellipse import Ellipse        
 
 def readlines(filename: str, header: int = 0) -> np.ndarray:
     with open(filename, "r") as file:
@@ -37,155 +35,183 @@ def read_all_files() -> Dict[str, Dict[int, np.ndarray]]:
             alldatavalues[folder][frequency] = data
     return alldatavalues
 
-def LinearRegression(x: Iterable[float], y: Iterable[float]) -> Tuple[float, float]:
+def get_ddx_over_f(ddxvals: Iterable[float], fvals: Iterable[float], residual: Optional[bool]=False):
     """
-    Given a set of points (x, y), this function returns the linear regression using
-    the least square method.
-    It returns the best values of A and B that (A + B*x) fits y
+    This function receives a set of acceleration values and force vals
+    It makes a ellipse regression and returns the value of
+        ddx/f = H(wi)/m
+    as a cmplex
     """
-    x = np.array(x)
-    y = np.array(y)
-    if len(x) != len(y):
-        raise ValueError("X and Y must have the same lenght!")
-    if x.ndim != 1:
-        raise ValueError("The X vector must be a 1D-array like")
-    if y.ndim != 1:
-        raise ValueError("The Y vector must be a 1D-array like")    
-    L = np.array([np.ones(len(x)), np.copy(x)])
-    return np.linalg.solve(L @ L.T, L @ y)
-
-def rotate_clockwise(x: Iterable[float], y: Iterable[float], angle: float) -> np.ndarray:
-    npts = len(x)
-    if len(y) != npts:
-        raise ValueError("x and y doesn't have same lenght")
-    u = np.zeros(npts)
-    v = np.zeros(npts)
-    c, s = np.cos(angle), np.sin(angle)
-    R = np.array([[c, s],
-                  [-s, c]])
-    for i in range(npts):
-        u[i], v[i] = R @ np.array([x[i], y[i]])
-    return u, v
-
-def fit_ellipse(x: Iterable[float], y: Iterable[float]):
+    ellipse = Ellipse()
+    ellipse.fit(ddxvals, fvals)
+    x_med, y_med = ellipse.center
+    x_amp, y_amp = ellipse.amplitude
+    x_ref, y_max = ellipse.get_point_ymax()
+    gain = x_amp/y_amp
+    phase = np.arccos((x_ref-x_med)/x_amp)
+    retorno = gain*np.cos(phase) + 1j*gain*np.sin(phase)
+    if not residual:
+        return retorno
+    distances = ellipse.distance(ddxvals, fvals)
+    resid = np.mean(distances)
+    return retorno, resid
+    
+def fit_curve(wvals: Iterable[float], Hoverm: Iterable[complex], weight: Optional[Iterable[float]]=None):
     """
-    Fit the coefficients a,b,c,d,e,f, representing an ellipse described by
-    the formula F(x,y) = ax^2 + bxy + cy^2 + dx + ey + f = 0 to the provided
-    arrays of data points x=[x1, x2, ..., xn] and y=[y1, y2, ..., yn].
-
-    Based on the algorithm of Halir and Flusser, "Numerically stable direct
-    least squares fitting of ellipses'.
+    Finds the best value for (m), (c), (k) using the (wvals), (gain) and (phase)
     """
-    D1 = np.vstack([x**2, x*y, y**2]).T
-    D2 = np.vstack([x, y, np.ones(len(x))]).T
-    S1 = D1.T @ D1
-    S2 = D1.T @ D2
-    S3 = D2.T @ D2
-    T = -np.linalg.inv(S3) @ S2.T
-    M = S1 + S2 @ T
-    C = np.array(((0, 0, 2), (0, -1, 0), (2, 0, 0)), dtype=float)
-    M = np.linalg.inv(C) @ M
-    eigval, eigvec = np.linalg.eig(M)
-    con = 4 * eigvec[0]* eigvec[2] - eigvec[1]**2
-    ak = eigvec[:, np.nonzero(con > 0)[0]]
-    return np.concatenate((ak, T @ ak)).ravel()
+    if weight is None:
+        weight = np.ones(len(wvals))
+    wvals = np.array(wvals)
+    gain = np.abs(Hoverm)
+    x = np.real(Hoverm)
+    y = np.imag(Hoverm)
+    
+    g2 = gain**2
+    ws2 = wvals**2
+    ws3 = ws2*wvals
+    ws4 = ws2**2
+    sumg2 = np.sum(weight*g2)
+    sumw2g2 = np.sum(weight*ws2*g2)
+    sumw4g2 = np.sum(weight*ws4*g2)
+    sumxw2 = np.sum(weight*x*ws2)
+    sumxw4 = np.sum(weight*x*ws4)
 
-def cart_to_pol(coeffs):
-    """
-    Convert the cartesian conic coefficients, (a, b, c, d, e, f), to the
-    ellipse parameters, where F(x, y) = ax^2 + bxy + cy^2 + dx + ey + f = 0.
-    The returned parameters are x0, y0, ap, bp, e, phi, where (x0, y0) is the
-    ellipse centre; (ap, bp) are the semi-major and semi-minor axes,
-    respectively; e is the eccentricity; and phi is the rotation of the semi-
-    major axis from the x-axis.
-    """
+    c = np.sum(weight*y*ws3)/sumw2g2
+    M = [[sumw4g2, -sumw2g2],
+         [-sumw2g2, sumg2]]
+    B = [sumxw4, -sumxw2]
+    m, k = np.linalg.solve(M, B)
+    return m, c, k
 
-    # We use the formulas from https://mathworld.wolfram.com/Ellipse.html
-    # which assumes a cartesian form ax^2 + 2bxy + cy^2 + 2dx + 2fy + g = 0.
-    # Therefore, rename and scale b, d and f appropriately.
-    a = coeffs[0]
-    b = coeffs[1] / 2
-    c = coeffs[2]
-    d = coeffs[3] / 2
-    f = coeffs[4] / 2
-    g = coeffs[5]
 
-    den = b**2 - a*c
-    if den > 0:
-        raise ValueError('coeffs do not represent an ellipse: b^2 - 4ac must'
-                         ' be negative!')
-
-    # The location of the ellipse centre.
-    x0, y0 = (c*d - b*f) / den, (a*f - b*d) / den
-
-    num = 2 * (a*f**2 + c*d**2 + g*b**2 - 2*b*d*f - a*c*g)
-    fac = np.sqrt((a - c)**2 + 4*b**2)
-    # The semi-major and semi-minor axis lengths (these are not sorted).
-    ap = np.sqrt(num / den / (fac - a - c))
-    bp = np.sqrt(num / den / (-fac - a - c))
-
-    # Sort the semi-major and semi-minor axis lengths but keep track of
-    # the original relative magnitudes of width and height.
-    width_gt_height = True
-    if ap < bp:
-        width_gt_height = False
-        ap, bp = bp, ap
-
-    # The eccentricity.
-    r = (bp/ap)**2
-    if r > 1:
-        r = 1/r
-    e = np.sqrt(1 - r)
-
-    # The angle of anticlockwise rotation of the major-axis from x-axis.
-    if b == 0:
-        phi = 0 if a < c else np.pi/2
-    else:
-        phi = np.arctan((2.*b) / (a - c)) / 2
-        if a > c:
-            phi += np.pi/2
-    if not width_gt_height:
-        # Ensure that phi is the angle to rotate to the semi-major axis.
-        phi += np.pi/2
-    phi = phi % np.pi
-
-    return x0, y0, ap, bp, e, phi
+def H(xi: float, r: Iterable[float]):
+    return -r**2 / (1-r**2 +2j*xi*r)
 
 def main():
     alldatavalues = read_all_files()
-    for folder, datafolder in alldatavalues.items():
-        plt.figure()
-        phases = []
-        for frequency, data in datafolder.items():
+    for nmass, (folder, datafolder) in enumerate(alldatavalues.items()):
+        if nmass == 0:
+            xiold = 0.0138
+            wnold = 70.34
+            wntheo = 64.42
+        elif nmass == 1:
+            xiold = 0.0173135
+            wnold = 107.033659497
+            wntheo = 87.26
+        elif nmass == 2:
+            xiold = 0.0204799371381206
+            wnold = 124.20297799834222
+            wntheo = 124.5
+        else:
+            xiold = 0.020171393290422755
+            wnold = 142.12969140933308
+            wntheo = 152.5
+
+        frequencies = np.array(list(datafolder.keys()))
+        wdots = 2*np.pi*frequencies
+        Hoverm = np.zeros(len(frequencies), dtype="complex128")
+        for i, (frequency, data) in enumerate(datafolder.items()):
             xvalues = data[:, 1]  # Acceleration
             yvalues = data[:, 2]  # Force
-            coefs = fit_ellipse(xvalues, yvalues)
-            x0, y0, ap, bp, e, phi = cart_to_pol(coefs)
-            phases.append(phi)
-            theta = np.linspace(0, 2*np.pi, 129)
-            xelipse = ap*np.cos(theta)
-            yelipse = bp*np.sin(theta)
-            u, v = rotate_clockwise(xelipse, yelipse, -phi)
-            # plt.plot(xvalues, yvalues, ls="dotted", label="ori"+str(frequency))
-            plt.plot(u+x0, v+y0, label="est" + str(frequency))
-        phases = np.array(phases) - np.pi
-        maxdevi = np.max(np.abs(phases - np.mean(phases)))/2
-        for i, ph in enumerate(phases):
-            if np.abs(ph-np.mean(phases)) > 0.99*maxdevi:
-                phases[i+1:] += np.pi
-                break
+            Hoverm[i] = get_ddx_over_f(xvalues, yvalues)
+            
+        msupo, csupo, ksupo = fit_curve(wdots, Hoverm)
+        wnsupo = np.sqrt(ksupo/msupo)
+        xisupo = csupo/(2*np.sqrt(ksupo*msupo))
+
+        angle = 0.85*(np.pi/2)  # To fit interpolation
+        uvals = np.linspace(0, angle, 1025)
+        rplot1 = np.exp(-np.tan(uvals)*np.log(wnsupo/min(wdots))/np.tan(angle))
+        rplot2 = np.exp(np.tan(uvals)*np.log(max(wdots)/wnsupo)/np.tan(angle))
+        rplot3 = np.linspace(0, min(rplot1), 129, endpoint=False)
+        rplot4 = np.linspace(max(rplot2), 200, 129)
+        rplot5 = np.exp(-np.tan(uvals)*np.log(wnold/min(wdots))/np.tan(angle))
+        rplot6 = np.exp(np.tan(uvals)*np.log(max(wdots)/wnold)/np.tan(angle))
+        rplot = np.concatenate([rplot1, rplot2, rplot3, rplot4, rplot5, rplot6])
+        rplot.sort()
+        wplot = wnsupo*rplot
+        Hplot = H(xisupo, rplot)
+        Hold = H(xiold, wplot/wnold)
+        print("Fitting values: " + str(folder))
+        print("    m = %.6f" % msupo)
+        print("    c = %.6f" % csupo)
+        print("    k = %.6f" % ksupo)
+        print("   wn = %.6f" % wnsupo)
+        print("   xi = %.6f" % xisupo)
+
+        plt.figure(figsize=(20, 5))
+        plt.plot(wplot, np.abs(Hold)/msupo, color="r", ls="dotted", label=r"exper 1")
+        plt.plot(wplot, np.abs(Hplot)/msupo, color="b", ls="dotted", label=r"estimated")
+        plt.scatter(wdots, np.abs(Hoverm), color="y", marker="o", edgecolors="k", label=r"readed")
+        plt.xlabel(r"Frequencies $\omega$ rad/s")
+        plt.ylabel(r"Gain of $\ddot{x}/f$")
+        plt.axhline(y=1/msupo, color="g", ls="dashed", label=r"$1/m$")
+        plt.axvline(x=wntheo, ls="dashed", color="m", label=r"$\left[\omega_{n}\right]_{theo}$")
         plt.legend()
-        plt.figure()
-        plt.scatter(datafolder.keys(), phases)
-        plt.xlabel(r"Frequency $f$ (Hz)")
-        plt.ylabel(r"Phase $\phi$ (Hz)")
-        plt.title(folder)
-        plt.axhline(y=0, ls="dashed")
-        plt.axhline(y=np.pi/2, ls="dashed")
-        plt.axhline(y=-np.pi/2, ls="dashed")
-        plt.axhline(y=np.pi, ls="dashed")
-        plt.axhline(y=-np.pi, ls="dashed")
-        plt.show()
+        plt.xlim((0, 200))
+        plt.grid()
+        plt.title("Gain for " + str(folder))
+        plt.savefig("Gain" + folder.replace("/", "") + ".png")
+        
+        plt.figure(figsize=(20, 5))
+        plt.plot(wplot, np.angle(Hold), color="r", ls="dotted", label=r"exper 1")
+        plt.plot(wplot, np.angle(Hplot), color="b", ls="dotted", label=r"estimated")
+        plt.scatter(wdots, np.angle(Hoverm), color="y", marker="o", edgecolors="k", label=r"readed")
+        plt.xlabel(r"Frequencies $\omega$ rad/s")
+        plt.ylabel(r"Phase of $\ddot{x}/f$")
+        plt.axvline(x=wntheo, ls="dashed", color="m", label=r"$\left[\omega_{n}\right]_{theo}$")
+        plt.axhline(y=0, color="g", ls="dashed")
+        plt.axhline(y=np.pi/2, color="g", ls="dashed")
+        plt.axhline(y=np.pi, color="g", ls="dashed")
+        plt.legend()
+        plt.xlim((0, 200))
+        plt.grid()
+        plt.title("Phase Diagram for " + str(folder))
+        plt.savefig("Phase" + folder.replace("/", "") + ".png")
+
+        plt.figure(figsize=(20, 5))
+        plt.plot(wplot, np.real(Hold)/msupo, color="r", ls="dotted", label=r"exper 1")
+        plt.plot(wplot, np.real(Hplot)/msupo, color="b", ls="dotted", label=r"estimated")
+        plt.scatter(wdots, np.real(Hoverm), color="y", marker="o", edgecolors="k", label=r"readed")
+        plt.xlabel(r"Frequencies $\omega$ rad/s")
+        plt.ylabel(r"Real part of $\ddot{x}/f$")
+        plt.axhline(y=0, color="g", ls="dashed")
+        plt.axvline(x=wntheo, ls="dashed", color="m", label=r"$\left[\omega_{n}\right]_{theo}$")
+        plt.legend()
+        plt.xlim((0, 200))
+        plt.grid()
+        plt.title("Real part for " + str(folder))
+        plt.savefig("Real" + folder.replace("/", "") + ".png")
+
+        plt.figure(figsize=(20, 5))
+        plt.plot(wplot, np.imag(Hold)/msupo, color="r", ls="dotted", label=r"exper 1")
+        plt.plot(wplot, np.imag(Hplot)/msupo, color="b", ls="dotted", label=r"estimated")
+        plt.scatter(wdots, np.imag(Hoverm), color="y", marker="o", edgecolors="k", label=r"readed")
+        plt.xlabel(r"Frequencies $\omega$ rad/s")
+        plt.ylabel(r"Imaginary part of $\ddot{x}/f$")
+        plt.axvline(x=wntheo, ls="dashed", color="m", label=r"$\left[\omega_{n}\right]_{theo}$")
+        plt.axhline(y=0, color="g", ls="dashed")
+        plt.xlim((0, 200))
+        plt.legend()
+        plt.grid()
+        plt.title("Imaginary part for " + str(folder))
+        plt.savefig("Imag" + folder.replace("/", "") + ".png")
+
+        plt.figure(figsize=(6, 6))
+        plt.plot(np.real(Hold)/msupo, np.imag(Hold)/msupo, color="r", ls="dotted", label=r"exper 1")
+        plt.plot(np.real(Hplot)/msupo, np.imag(Hplot)/msupo, color="b", ls="dotted", label=r"estimated")
+        plt.scatter(np.real(Hoverm), np.imag(Hoverm), color="y", marker="o", edgecolors="k", label=r"readed")
+        plt.axvline(x=1/msupo, ls="dashed", color="g", label=r"$1/m$")
+        plt.xlabel(r"Real part $\ddot{x}/f$")
+        plt.ylabel(r"Imaginary part $\ddot{x}/f$")
+        plt.title("Complex plane diagram for " + str(folder))
+        plt.legend()
+        plt.grid()
+        plt.gca().axis("equal")
+        plt.savefig("ComplexPlane" + folder.replace("/", "") + ".png")
+        # plt.show()
+
 
 if __name__ == "__main__":
     main()
