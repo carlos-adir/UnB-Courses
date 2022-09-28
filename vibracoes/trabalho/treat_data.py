@@ -24,8 +24,9 @@ frequency = data[:, 0]*pi2
 magnitude = data[:, 1]
 phase = data[:, 2]
 Greaded = magnitude*np.exp(1j*phase*np.pi/180)
-intervalofrequencia = np.array([15, 57])*pi2
-# intervalofrequencia = [min(frequency), max(frequency)]
+# intervalofrequencia = np.array([15, 57])*pi2
+intervalofrequencia = [min(frequency), max(frequency)]
+print(intervalofrequencia)
 mask = (frequency >= intervalofrequencia[0]) * (frequency <= intervalofrequencia[1])
 # wsample = frequency[mask]
 # Gsample = Greaded[mask]
@@ -54,7 +55,7 @@ m1 = 13  # kg
 angle = 0.85*(np.pi/2)  # To fit interpolation
 uvals = np.linspace(0, angle, 1025)
 
-if True:
+if False:
     F0, k1, c1 = regressao(wsample[mask], Gsample[mask], m1)
     wn1 = np.sqrt(k1/m1)
     xi1 = c1/np.sqrt(4*k1*m1)
@@ -103,27 +104,27 @@ if True:
 
     plt.show()
 
-if False:
+if True:
     fig, ax = plt.subplots()
     plt.subplots_adjust(bottom=0.35)
     xi = 0.6
     wn = 0.2
-    F0 = 0.5
+    A = 0.5
 
     # Create 3 axes for 3 sliders red,green and blue
     axxi = plt.axes([0.25, 0.2, 0.65, 0.03])
     axwn = plt.axes([0.25, 0.15, 0.65, 0.03])
-    axF0 = plt.axes([0.25, 0.1, 0.65, 0.03])
+    axA = plt.axes([0.25, 0.1, 0.65, 0.03])
     xislider = Slider(axxi, r'$\xi$', 0.0, 1.0, 0.6)
     wnslider = Slider(axwn, r'$\omega_n$', 10, 100, 75)
-    F0slider = Slider(axF0, r'$F_0$', 0.0, 100, 0)
+    Aslider = Slider(axA, r'$A$', 0.0, 100, 0)
  
     # Create function to be called when slider value is changed
 
     def update(val):
         xi = xislider.val
-        wn = wnslider.val
-        F0 = F0slider.val
+        wn = pi2*wnslider.val
+        A = Aslider.val
         rplot1 = np.exp(-np.tan(uvals)*np.log(wn/min(intervalofrequencia))/np.tan(angle))
         rplot2 = np.exp(np.tan(uvals)*np.log(max(intervalofrequencia)/wn)/np.tan(angle))
         wplot = wn * np.concatenate([np.flipud(rplot1), rplot2])
@@ -132,17 +133,17 @@ if False:
         c = 2*m1*xi*wn
         k = m1*wn**2
         Gw = wplot**2/(k + 1j*c*wplot - m1*wplot**2)
-        xddot = F0*Gw
+        xddot = A*Gw
         ax.cla()
-        if False:  # Ganho
-            ax.scatter(freq, np.abs(Gsample), label="sample", marker=".", color="tab:blue")
-            ax.plot(wplot, np.abs(xddot), label=r"$\dfrac{-\omega^2F_0}{k+ic\omega-m\omega^2}$", color="r", ls="dotted")
+        if True:  # Ganho
+            ax.scatter(wsample/pi2, np.abs(Gsample), label="sample", marker=".", color="tab:blue")
+            ax.plot(wplot/pi2, np.abs(xddot), label=r"$\dfrac{-\omega^2A}{k+ic\omega-m\omega^2}$", color="r", ls="dotted")
             ax.axvline(x=wope, color="g", ls="dashed")
             ax.set_xlabel(r"Frequência $\omega$ (Hz)")
             ax.set_ylabel(r"Ganho")
         elif False:  # Fase
-            ax.scatter(freq, (180/np.pi)*np.angle(Gsample), label="sample", marker=".", color="tab:blue")
-            ax.plot(wplot, (180/np.pi)*np.angle(xddot), label=r"$\dfrac{\omega^2F_0}{k+ic\omega-m\omega^2}$", color="r", ls="dotted")
+            ax.scatter(wsample/pi2, (180/np.pi)*np.angle(Gsample), label="sample", marker=".", color="tab:blue")
+            ax.plot(wplot/pi2, (180/np.pi)*np.angle(xddot), label=r"$\dfrac{\omega^2F_0}{k+ic\omega-m\omega^2}$", color="r", ls="dotted")
             ax.axvline(x=wope, color="g", ls="dashed")
             ax.set_yticks([-180, -135, -90, -45, 0, 45, 90, 135, 180])
             ax.set_xlabel(r"Frequência $\omega$ (Hz)")
@@ -161,23 +162,7 @@ if False:
     # Call update function when slider value is changed
     xislider.on_changed(update)
     wnslider.on_changed(update)
-    F0slider.on_changed(update)
-    
-    # Create axes for reset button and create button
-    resetax = plt.axes([0.8, 0.025, 0.1, 0.04])
-    button = Button(resetax, 'Reset', color='gold',
-                    hovercolor='skyblue')
-    
-    # Create a function resetSlider to set slider to
-    # initial values when Reset button is clicked
- 
-    def resetSlider(event):
-        xislider.reset()
-        wnslider.reset()
-        F0slider.reset()
-    
-    # Call resetSlider function when clicked on reset button
-    button.on_clicked(resetSlider)
+    Aslider.on_changed(update)
  
 # Display graph
 plt.show()
