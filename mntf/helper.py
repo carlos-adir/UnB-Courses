@@ -8,49 +8,103 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from numpy.random import default_rng
 np.set_printoptions(4)
 
+def getChebyshevnodes(npts: int, a: float, b: float):
+    chebyshevnodes = np.cos(np.pi*np.arange(1, 2*npts, 2)/(2*npts))
+    return 0.5*( a+b - (b-a)*chebyshevnodes)
 
-def getMatrix(y: int, z: int, k: int, N: nurbs.SplineBaseFunction):
+def get_weightvector(nodes: Tuple[float]):
     """
-    Dado o par (y, z) essa funcao retorna o valor de [M_yz]
-    Em que 
-        (u_{k+1}-u_{k}) * [M_yz] = int_{u_k}^{u_{k+1}} [N_y] x [N_z] du
+    Find the inverse of the matrix A from the link bellow, given the knots
+    https://math.stackexchange.com/questions/4614357/find-inverse-of-matrix-with-bezier-coefficients
     """
-    if z < y:
-        return np.transpose(getMatrix(z, y, k, N))
-    if y == 0 and z == 0:
-        return np.ones((1, 1))
-    if y == 0 and z == 1:
-        return np.ones((1, 2))/2
-    if y == 1 and z == 1:
-        return (1+np.eye(2))/6
-
-    U = N.knotvector
-    matResult = np.zeros((y+1, z+1), dtype="float64")
-    BezSysLin = np.zeros((y+z+1, y+z+1), dtype="float64")
-    for ii in range(y+z+1):
-        tii = ii/(y+z)
-        for q in range(y+z+1):
-            BezSysLin[ii, q] = math.comb(y+z,q)*(1-tii)**(y+z-q)*(tii**q)
+    npts = len(nodes)
+    BezSysLin = np.zeros((npts, npts), dtype="float64")
+    for ii, tii in enumerate(nodes):
+        for q in range(npts):
+            BezSysLin[ii, q] = math.comb(npts-1,q)*(1-tii)**(npts-1-q)*(tii**q)
     invBezSysLin = np.linalg.inv(BezSysLin)
-    weightvector = np.array([sum(invBezSysLin[:, j]) for j in range(y+z+1)])/(y+z+1)
+    return np.array([sum(invBezSysLin[:, j]) for j in range(npts)])/npts
+
+def getMatrix2D(N: nurbs.SplineBaseFunction, k: int, a: int, b: int):
+    if a <= b:
+        return getMatrix2D_ordened(N, k, a, b)
+    return np.transpose(getMatrix2D(N, k, b, a))
     
-    uzvals = np.linspace(U[k], U[k+1], y+z+1)
-    Nvalsy = N[k-y:k+1,y](uzvals)
-    Nvalsz = N[k-z:k+1,z](uzvals)
-    for ii in range(y+z+1):
-        matResult += weightvector[ii] * np.tensordot(Nvalsy[:,ii], Nvalsz[:,ii], axes=0)
+
+def getMatrix2D_ordened(N: nurbs.SplineBaseFunction, k: int, a: int, b: int):
+    if a == 0 and b == 0:
+        return np.ones((1, 1))
+    if a == 0 and b == 1:
+        return np.ones((1, 2))/2
+    if a == 1 and b == 1:
+        return (1+np.eye(2))/6
+    matResult = np.zeros((a+1, b+1), dtype="float64")
+    tvals = getChebyshevnodes(a+b+1, 0, 1)
+    weightvector = get_weightvector(tvals)
+    U = N.knotvector
+    uzvals = getChebyshevnodes(a+b+1, U[k], U[k+1])
+    Nvalsa = N[k-a:k+1,a](uzvals)
+    Nvalsb = N[k-b:k+1,b](uzvals)
+    for ii in range(a+b+1):
+        matResult += weightvector[ii] * np.tensordot(Nvalsa[:,ii], Nvalsb[:,ii], axes=0)
     return matResult
 
-def getH(y: int, z:int, N: nurbs.SplineBaseFunction):
+def getMatrix3D(N: nurbs.SplineBaseFunction, k: int, a: int, b: int, c: int):
+    if a <= b and b <= c:
+        return getMatrix3D_ordened(N, k, a, b, c)
+    raise ValueError(f"a = {a}, b = {b}, c = {c}")
+    
+
+def getMatrix3D_ordened(N: nurbs.SplineBaseFunction, k: int, a: int, b: int, c: int):
+    matResult = np.zeros((a+1, b+1, c+1), dtype="float64")
+    
+    tvals = getChebyshevnodes(a+b+c+1, 0, 1)
+    weightvector = get_weightvector(tvals)
+    U = N.knotvector
+    uzvals = getChebyshevnodes(a+b+c+1, U[k], U[k+1])
+    Nvalsa = N[k-a:k+1,a](uzvals)
+    Nvalsb = N[k-b:k+1,b](uzvals)
+    Nvalsc = N[k-c:k+1,c](uzvals)
+    for ii in range(a+b+c+1):
+        tempMatrix = np.tensordot(Nvalsa[:,ii], Nvalsb[:,ii], axes=0)
+        matResult += weightvector[ii] * np.tensordot(tempMatrix, Nvalsc[:,ii], axes=0)
+    return matResult
+
+def getMatrix(N: nurbs.SplineBaseFunction, k: int, *args: Tuple[int]):
+    """
+    Dado o par (a, b) essa funcao retorna o valor de [M_ab]
+    Em que 
+        (u_{k+1}-u_{k}) * [M_ab] = int_{u_k}^{u_{k+1}} [N_a] x [N_b] du
+    """
+    if len(args) == 2:
+        a, b = args
+        return getMatrix2D(N, k, a, b)
+    elif len(args) == 3:
+        a, b, c = args
+        return getMatrix3D(N, k, a, b, c)
+    
+
+def getH(N: nurbs.SplineBaseFunction, a: int, b: int):
     U = N.knotvector
     p, n = N.degree, N.npts
-    Hyz = np.zeros((n, n), dtype="float64")
+    Hab = np.zeros((n, n), dtype="float64")
     for k in range(p, n):
         if U[k+1] == U[k]:
             continue
-        Myz = getMatrix(y, z, k, N)
-        Hyz[k-y:k+1, k-z:k+1] += (U[k+1]-U[k])*Myz
-    return Hyz
+        Mab = getMatrix(N, k, a, b)
+        Hab[k-a:k+1, k-b:k+1] += (U[k+1]-U[k])*Mab
+    return Hab
+
+def getHH(N: nurbs.SplineBaseFunction, a: int, b: int, c: int):
+    U = N.knotvector
+    p, n = N.degree, N.npts
+    Hab = np.zeros((n, n), dtype="float64")
+    for k in range(p, n):
+        if U[k+1] == U[k]:
+            continue
+        Mabc = getMatrix(N, k, a, b, c)
+        Hab[k-a:k+1, k-b:k+1, k-c:k+1] += (U[k+1]-U[k])*Mabc
+    return Hab
 
 def getD(j: int, U: Tuple[float]):
     n = U.npts
