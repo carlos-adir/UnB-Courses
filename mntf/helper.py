@@ -25,86 +25,131 @@ def get_weightvector(nodes: Tuple[float]):
     invBezSysLin = np.linalg.inv(BezSysLin)
     return np.array([sum(invBezSysLin[:, j]) for j in range(npts)])/npts
 
-def getMatrix2D(N: nurbs.SplineBaseFunction, k: int, a: int, b: int):
-    if a <= b:
-        return getMatrix2D_ordened(N, k, a, b)
-    return np.transpose(getMatrix2D(N, k, b, a))
-    
 
-def getMatrix2D_ordened(N: nurbs.SplineBaseFunction, k: int, a: int, b: int):
-    if a == 0 and b == 0:
-        return np.ones((1, 1))
-    if a == 0 and b == 1:
-        return np.ones((1, 2))/2
-    if a == 1 and b == 1:
-        return (1+np.eye(2))/6
-    matResult = np.zeros((a+1, b+1), dtype="float64")
-    tvals = getChebyshevnodes(a+b+1, 0, 1)
-    weightvector = get_weightvector(tvals)
+
+def getM1(N: nurbs.SplineBaseFunction, k: int, a: int) -> np.ndarray:
+    """
+    Dado o valor de "a" essa funcao retorna o valor de [M_a]
+    Em que 
+        (u_{k+1}-u_{k}) * [M_a] = int_{u_k}^{u_{k+1}} [N_a] du
+    """
+    if a == 0:
+        return np.ones(1)
+    if a == 1:
+        return np.ones(2)/2
     U = N.knotvector
-    uzvals = getChebyshevnodes(a+b+1, U[k], U[k+1])
-    Nvalsa = N[k-a:k+1,a](uzvals)
-    Nvalsb = N[k-b:k+1,b](uzvals)
-    for ii in range(a+b+1):
-        matResult += weightvector[ii] * np.tensordot(Nvalsa[:,ii], Nvalsb[:,ii], axes=0)
+    uvals = getChebyshevnodes(a+1, 0, 1)
+    weightvector = get_weightvector(uvals)
+    matResult = np.zeros(a+1, dtype="float64")
+    uvals = getChebyshevnodes(a+1, U[k], U[k+1])
+    Nvalsa = N[k-a:k+1,a](uvals)
+    for aa in range(a+1):
+        matResult[aa] += np.sum(weightvector * Nvalsa[aa])
     return matResult
 
-def getMatrix3D(N: nurbs.SplineBaseFunction, k: int, a: int, b: int, c: int):
-    if a <= b and b <= c:
-        return getMatrix3D_ordened(N, k, a, b, c)
-    raise ValueError(f"a = {a}, b = {b}, c = {c}")
-    
-
-def getMatrix3D_ordened(N: nurbs.SplineBaseFunction, k: int, a: int, b: int, c: int):
-    matResult = np.zeros((a+1, b+1, c+1), dtype="float64")
-    
-    tvals = getChebyshevnodes(a+b+c+1, 0, 1)
-    weightvector = get_weightvector(tvals)
-    U = N.knotvector
-    uzvals = getChebyshevnodes(a+b+c+1, U[k], U[k+1])
-    Nvalsa = N[k-a:k+1,a](uzvals)
-    Nvalsb = N[k-b:k+1,b](uzvals)
-    Nvalsc = N[k-c:k+1,c](uzvals)
-    for ii in range(a+b+c+1):
-        tempMatrix = np.tensordot(Nvalsa[:,ii], Nvalsb[:,ii], axes=0)
-        matResult += weightvector[ii] * np.tensordot(tempMatrix, Nvalsc[:,ii], axes=0)
-    return matResult
-
-def getMatrix(N: nurbs.SplineBaseFunction, k: int, *args: Tuple[int]):
+def getM2(N: nurbs.SplineBaseFunction, k: int, a: int, b: int) -> np.ndarray:
     """
     Dado o par (a, b) essa funcao retorna o valor de [M_ab]
     Em que 
         (u_{k+1}-u_{k}) * [M_ab] = int_{u_k}^{u_{k+1}} [N_a] x [N_b] du
     """
-    if len(args) == 2:
-        a, b = args
-        return getMatrix2D(N, k, a, b)
-    elif len(args) == 3:
-        a, b, c = args
-        return getMatrix3D(N, k, a, b, c)
-    
+    if a == 0 and b == 0:
+        return np.ones((1, 1))
+    if a == 0 and b == 1:
+        return np.ones((1, 2))/2
+    if a == 1 and b == 0:
+        return np.ones((2, 1))/2
+    if a == 1 and b == 1:
+        return (1+np.eye(2))/6
+    U = N.knotvector
+    uvals = getChebyshevnodes(a+b+1, 0, 1)
+    weightvector = get_weightvector(uvals)
+    uvals = getChebyshevnodes(a+b+1, U[k], U[k+1])
+    Nvalsa = N[k-a:k+1,a](uvals)
+    Nvalsb = N[k-b:k+1,b](uvals)
+    matResult = np.zeros((a+1, b+1), dtype="float64")
+    for aa in range(a+1):
+        for bb in range(b+1):
+            matResult[aa, bb] = np.sum(weightvector * Nvalsa[aa] * Nvalsb[bb])
+    return matResult
 
-def getH(N: nurbs.SplineBaseFunction, a: int, b: int):
+def getM3(N: nurbs.SplineBaseFunction, k: int, a: int, b: int, c: int) -> np.ndarray:
+    """
+    Dado o par (a, b, c) essa funcao retorna o valor de [M_abc]
+    Em que 
+        (u_{k+1}-u_{k}) * [M_abc] = int_{u_k}^{u_{k+1}} [N_a] x [N_b] x [N_c] du
+    """
+    if not (a <= b and b <= c):
+        raise ValueError(f"a, b, c must be in order: {a}, {b}, {c}")
+    if a == 0 and b == 0 and c == 0:
+        return np.ones((1, 1, 1))
+
+    U = N.knotvector
+    uvals = getChebyshevnodes(a+b+c+1, 0, 1)
+    weightvector = get_weightvector(uvals)
+    uvals = getChebyshevnodes(a+b+c+1, U[k], U[k+1])
+    Nvalsa = N[k-a:k+1,a](uvals)
+    Nvalsb = N[k-b:k+1,b](uvals)
+    Nvalsc = N[k-c:k+1,c](uvals)
+    matResult = np.zeros((a+1, b+1, c+1), dtype="float64")
+    for aa in range(a+1):
+        for bb in range(b+1):
+            for cc in range(c+1):
+                matResult[aa, bb, cc] = np.sum(weightvector * Nvalsa[aa] * Nvalsb[bb] * Nvalsc[cc])
+    return matResult
+
+def getM(N: nurbs.SplineBaseFunction, k: int, *args: Tuple[int]):
+    if len(args) == 1:
+        return getM1(N, k, args[0])
+    if len(args) == 2:
+        return getM2(N, k, args[0], args[1])
+    if len(args) == 3:
+        return getM3(N, k, args[0], args[1], args[2])
+    raise ValueError
+
+def getH1(N: nurbs.SplineBaseFunction, a: int):
+    U = N.knotvector
+    p, n = N.degree, N.npts
+    Ha = np.zeros(n, dtype="float64")
+    for k in range(p, n):
+        if U[k+1] == U[k]:
+            continue
+        Ma = getM1(N, k, a)
+        Ha[k-a:k+1] += (U[k+1]-U[k])*Ma
+    return Ha
+
+def getH2(N: nurbs.SplineBaseFunction, a: int, b: int):
     U = N.knotvector
     p, n = N.degree, N.npts
     Hab = np.zeros((n, n), dtype="float64")
     for k in range(p, n):
         if U[k+1] == U[k]:
             continue
-        Mab = getMatrix(N, k, a, b)
+        Mab = getM2(N, k, a, b)
         Hab[k-a:k+1, k-b:k+1] += (U[k+1]-U[k])*Mab
     return Hab
 
-def getHH(N: nurbs.SplineBaseFunction, a: int, b: int, c: int):
+def getH3(N: nurbs.SplineBaseFunction, a: int, b:int, c: int):
     U = N.knotvector
     p, n = N.degree, N.npts
-    Hab = np.zeros((n, n), dtype="float64")
+    Habc = np.zeros((n, n, n), dtype="float64")
     for k in range(p, n):
         if U[k+1] == U[k]:
             continue
-        Mabc = getMatrix(N, k, a, b, c)
-        Hab[k-a:k+1, k-b:k+1, k-c:k+1] += (U[k+1]-U[k])*Mabc
-    return Hab
+        Mabc = getM3(N, k, a, b, c)
+        Habc[k-a:k+1, k-b:k+1, k-c:k+1] += (U[k+1]-U[k])*Mabc
+    return Habc
+
+
+def getH(N: nurbs.SplineBaseFunction, *args: Tuple[int]):
+    if len(args) == 1:
+        return getH1(N, args[0])
+    if len(args) == 2:
+        return getH2(N, args[0], args[1])
+    if len(args) == 3:
+        return getH3(N, args[0], args[1], args[2])
+    raise ValueError
+
 
 def getD(j: int, U: Tuple[float]):
     n = U.npts
@@ -317,7 +362,9 @@ def get_random_matrix_definite_positive(side: int):
     assert np.all(A == np.transpose(A))
     return A
 
-if __name__ == "__main__":
+
+
+def main_test_solve_system():
     aproximacao = True
 
     ntests = 200
@@ -453,3 +500,10 @@ if __name__ == "__main__":
         np.testing.assert_almost_equal(X1[mexp], Xgood[mexp])
 
 
+def test_matrix():
+    n, p = 3, 2
+    U = nurbs.GeneratorKnotVector.uniform(p, n)
+    N = nurbs.SplineBaseFunction(U)
+    H = getH(N, 2, 1)
+if __name__ == "__main__":
+    test_matrix()
