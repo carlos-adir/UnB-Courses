@@ -79,8 +79,8 @@ def getM3(N: nurbs.SplineBaseFunction, k: int, a: int, b: int, c: int) -> np.nda
     Em que 
         (u_{k+1}-u_{k}) * [M_abc] = int_{u_k}^{u_{k+1}} [N_a] x [N_b] x [N_c] du
     """
-    if not (a <= b and b <= c):
-        raise ValueError(f"a, b, c must be in order: {a}, {b}, {c}")
+    # if not (a <= b and b <= c):
+    #     raise ValueError(f"a, b, c must be in order: {a}, {b}, {c}")
     if a == 0 and b == 0 and c == 0:
         return np.ones((1, 1, 1))
 
@@ -220,7 +220,7 @@ def plot_field(xmesh: Tuple[float], ymesh: Tuple[float], zvals: np.ndarray, ax =
     return ax
     
 
-def solve_system(A: np.ndarray, B: np.ndarray, X: np.ndarray, X0: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
+def solve_system(A: np.ndarray, B: np.ndarray, X: Optional[np.ndarray] = None, X0: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
     """
     Resolve o sistema A * X = B
     Recebe 
@@ -229,8 +229,10 @@ def solve_system(A: np.ndarray, B: np.ndarray, X: np.ndarray, X0: Optional[np.nd
         ```X```: Matriz de tamanho (n1, n2), com valores ```nan``` dentro e com condicoes de contorno
     Se X0 for dado, eh usado um metodo iterativo
     """
-    
-    if B.shape != X.shape:
+    if X is None:
+        X = np.empty(B.shape, dtype="float64")
+        X.fill(np.nan) 
+    elif B.shape != X.shape:
         raise ValueError(f"B.shape = {B.shape} != {X.shape} = X.shape")
     if X0 is not None:
         if X0.shape != X.shape:
