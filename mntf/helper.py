@@ -242,7 +242,6 @@ def solve_system(A: np.ndarray, B: np.ndarray, X: Optional[np.ndarray] = None, X
     if not np.any(np.isnan(X)):
         raise ValueError("At least one unknown must be given! All values of X are known")
 
-    Xoriginal = np.copy(X)
     ns = B.shape
     ndim = len(ns)
     ntot = np.prod(ns)

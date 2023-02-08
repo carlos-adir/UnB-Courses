@@ -4,24 +4,83 @@ from typing import Callable, Tuple
 from helper import getD, getH, solve_system, plot_field
 from matplotlib import pyplot as plt
 
-def fit_spline_curve(N: nurbs.SplineBaseFunction, f: Callable[[float], float]) -> np.array:
-    tsample = np.linspace(0, 1, 4*N.npts)
-    Lt = N(tsample)
-    ctrlpoints = np.linalg.lstsq(Lt.T, f(tsample), rcond=None)[0]
-    return ctrlpoints
+class Fit:
 
-def fit_spline_surface(Nx: nurbs.SplineBaseFunction, Ny: nurbs.SplineBaseFunction, f: Callable[[float, float], float]) -> np.array:
-    xsample = np.linspace(0, 1, 4*Nx.npts)
-    ysample = np.linspace(0, 1, 4*Ny.npts)
-    Lx = Nx(xsample)
-    Ly = Ny(ysample)
-    Kx = np.linalg.inv(Lx @ Lx.T) @ Lx
-    Ky = np.linalg.inv(Ly @ Ly.T) @ Ly
-    F = np.zeros((len(xsample), len(ysample)), dtype="float64")
-    for i, xi in enumerate(xsample):
-        for j, yj in enumerate(ysample):
-            F[i, j] = f(xi, yj)
-    return Kx @ F @ Ky.T
+    @staticmethod
+    def spline_curve(N: nurbs.SplineBaseFunction, f: Callable[[float], float], BCvals: np.ndarray=None) -> np.array:
+        tsample = np.linspace(0, 1, 4*N.npts)
+        Lt = N(tsample)
+        F = np.array([f(ti) for ti in tsample], dtype="float64")
+        if BCvals is None:
+            return np.linalg.lstsq(Lt.T, F, rcond=None)[0]
+        mask = np.isnan(BCvals)
+        BCvals[mask] = 0
+        F -= Lt.T @ BCvals
+        BCvals[mask] = 0
+        nunkknown = np.sum(mask)
+        indexs = np.zeros((nunkknown, 1), dtype="int32")
+        k = 0
+        for i in range(N.npts):
+            if mask[i]:
+                indexs[k, 0] = i
+                k += 1
+        
+        B = np.zeros(nunkknown, dtype="float64")
+        A = np.zeros((nunkknown, nunkknown), dtype="float64")
+        for ka, (ia, ) in enumerate(indexs):
+            B[ka] = Lt[ia] @ F
+            for kb, (ib, ) in enumerate(indexs):
+                A[ka, kb] = Lt[ia] @ Lt[ib]
+        solution = np.linalg.solve(A, B)
+        finalresult = np.copy(BCvals)
+        for a, (ia, ) in enumerate(indexs):
+            finalresult[ia] = solution[a]
+        BCvals[mask].fill(np.nan)
+        return finalresult
+
+    @staticmethod
+    def spline_surface(Nx: nurbs.SplineBaseFunction, Ny: nurbs.SplineBaseFunction, f: Callable[[float, float], float], BCvals: np.ndarray = None) -> np.array:
+        nx, ny = Nx.npts, Ny.npts
+        xsample = np.linspace(0, 1, 2*nx+1)
+        ysample = np.linspace(0, 1, 2*ny+1)
+        nxs, nys = len(xsample), len(ysample)
+        F = np.zeros((nxs, nys), dtype="float64")
+        for i, xi in enumerate(xsample):
+            for j, yj in enumerate(ysample):
+                F[i, j] = f(xi, yj)
+        
+        Lx = Nx(xsample)
+        Ly = Ny(ysample)
+        Kx = np.linalg.inv(Lx @ Lx.T) @ Lx
+        Ky = np.linalg.inv(Ly @ Ly.T) @ Ly
+        if BCvals is None:
+            return Kx @ F @ Ky.T
+        mask = np.isnan(BCvals)
+        BCvals[mask] = 0
+        F -= Lx.T @ BCvals @ Ly
+        BCvals[mask] = np.nan
+        nunkknown = np.sum(mask)
+        indexs = np.zeros((nunkknown, 2), dtype="int32")
+        k = 0
+        for i in range(nx):
+            for j in range(ny):
+                if mask[i, j]:
+                    indexs[k] = i, j
+                    k += 1
+        B = np.zeros(nunkknown, dtype="float64")
+        A = np.zeros((nunkknown, nunkknown), dtype="float64")
+        for ka, (ia, ja) in enumerate(indexs):
+            B[ka] = Lx[ia] @ F @ Ly[ja].T
+            for kb, (ib, jb) in enumerate(indexs):
+                A[ka, kb] = (Lx[ia] @ Lx[ib]) * (Ly[ja] @ Ly[jb])
+        solution = np.linalg.solve(A, B)
+        finalresult = np.copy(BCvals)
+        for a, (ia, ja) in enumerate(indexs):
+            finalresult[ia, ja] = solution[a]
+        BCvals[mask].fill(np.nan)
+        return finalresult
+
+    
 
 
 def compute_pressure_from_current_line(Nx: nurbs.SplineBaseFunction, Ny: nurbs.SplineBaseFunction, S: np.ndarray)->np.ndarray:
@@ -118,8 +177,8 @@ def alpha(U: Tuple[float], i: int, j: int):
 
 
 def plot_all_fields(Nx: nurbs.SplineBaseFunction, Ny: nurbs.SplineBaseFunction, S = None, U = None, V = None, W = None, P=None):
-    xplot = np.linspace(0, 1, 257)
-    yplot = np.linspace(0, 1, 257)
+    xplot = np.linspace(0, 1, 1025)
+    yplot = np.linspace(0, 1, 1025)
     Lx = Nx(xplot)
     Ly = Ny(yplot)
 
@@ -151,3 +210,31 @@ def plot_all_fields(Nx: nurbs.SplineBaseFunction, Ny: nurbs.SplineBaseFunction, 
         axes[i].set_ylim(0, 1)
         [axes[i].axvline(x=xi, ls="dotted", color="k") for xi in list(set(Nx.knotvector))[1:-1]]
         [axes[i].axhline(y=yj, ls="dotted", color="k") for yj in list(set(Ny.knotvector))[1:-1]]
+
+
+if __name__ == "__main__":
+
+    px, py = np.random.randint(1, 4, size=(2, ))
+    nx, ny = np.random.randint(max(px, py)+1, 7, size=(2,) )
+    Pgood = 2*np.random.rand(nx, ny)-1
+    Ux = nurbs.GeneratorKnotVector.uniform(px, nx)
+    Uy = nurbs.GeneratorKnotVector.uniform(py, ny)
+    Nx = nurbs.SplineBaseFunction(Ux)
+    Ny = nurbs.SplineBaseFunction(Uy)
+    
+    f = lambda x, y: Nx(x).T @ Pgood @ Ny(y)
+
+    Pbound = np.copy(Pgood)
+    nunknown = np.random.randint(1, nx*ny+1)
+    while np.sum(np.isnan(Pbound)) < nunknown:
+        i = np.random.randint(0, nx)
+        j = np.random.randint(0, ny)
+        Pbound[i, j] = np.nan
+    Ptest = Fit.spline_surface(Nx, Ny, f, Pbound)
+    print("Pgood = ")
+    print(Pgood)
+    print("Pbound = ")
+    print(Pbound)
+    print("Ptest = ")
+    print(Ptest)
+    np.testing.assert_almost_equal(Ptest, Pgood)
