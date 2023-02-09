@@ -150,6 +150,83 @@ def getH(N: nurbs.SplineBaseFunction, *args: Tuple[int]):
         return getH3(N, args[0], args[1], args[2])
     raise ValueError
 
+def getMatrix(N: nurbs.SplineBaseFunction, *args: Tuple[int]):
+    """
+    Retorna um valor de [I], a integral de
+    I = int_0^1 [Nx^(a)] x [Nx^(b)] x ... x [Nx^(z)] dx
+    em que args = (a, b, ..., z)
+    Exemplos:
+        getMatrix(N, 0) -> I = int_0^1 [Nx] dx
+        getMatrix(N, 0, 0) -> I = int_0^1 [Nx] x [Nx] dx
+        getMatrix(N, 0, 0, 0) -> I = int_0^1 [Nx] x [Nx] x [Nx] dx
+        getMatrix(N, 1) -> I = int_0^1 [Nx'] dx
+        getMatrix(N, 2) -> I = int_0^1 [Nx''] dx
+        getMatrix(N, 1, 0) -> I = int_0^1 [Nx'] x [Nx] dx
+        getMatrix(N, 0, 1) -> I = int_0^1 [Nx] x [Nx'] dx
+        getMatrix(N, 1, 1) -> I = int_0^1 [Nx'] x [Nx'] dx
+    """
+    n, p, U = N.npts, N.degree, N.knotvector
+    ndim = len(args)
+    if not (0 < ndim < 4):
+        raise ValueError("The number of arguments must be 1, 2, or 3")
+    maxderoriginal = np.max(args)
+    maxderpartes = int(np.ceil(np.mean(args)))
+    if maxderpartes > p:
+        return np.zeros(ndim*[n], dtype="float64")
+    D = {}
+    for i in range(max(1,p-maxderpartes), p+1):
+        D[i] = getD(i, U)
+    if ndim == 1:
+        a = a
+        if a == 0:
+            return getH(N, p)
+        elif a == 1:
+            return D[p] @ getH(N, p-1)
+        elif a == 2:
+            return D[p] @ D[p-1] @ getH(N, p-2)
+        elif a == 3:
+            return D[p] @ D[p-1] @ D[p-2] @ getH(N, p-3)
+    elif ndim == 2:
+        a, b = args
+        if a == 0 and b == 0:
+            return getH(N, p, p)
+        elif a == 1 and b == 1:
+            return D[p] @ getH(N, p-1, p-1) @ D[p].T
+        elif a == 2 and b == 2:
+            return D[p] @ D[p-1] @ getH(N, p-2, p-2) @ D[p-1].T @ D[p].T
+        elif a == 3 and b == 3:
+            return D[p] @ D[p-1] @ D[p-1] @ getH(N, p-3, p-3) @ D[p-2].T @ D[p-1].T @ D[p].T
+
+        elif a == 1 and b == 0:
+            return D[p] @ getH(N, p-1, p)
+        elif a == 0 and b == 1:
+            return getH(N, p-1, p-1) @ D[p].T
+        elif a == 2 and b == 0:
+            termo = np.tensordot(D[p] @ N[:, p-1](1), N[:, p](1), axes=0)
+            termo -= np.tensordot(D[p] @ N[:, p-1](0), N[:, p](0), axes=0)
+            termo -= getMatrix(N, 1, 1)
+            return termo
+        elif a == 0 and b == 2:
+            termo = np.tensordot(N[:, p](1), D[p] @ N[:, p-1](1), axes=0)
+            termo -= np.tensordot(N[:, p](0), D[p] @ N[:, p-1](0), axes=0)
+            termo -= getMatrix(N, 1, 1)
+            return termo
+        elif a == 1 and b == 2:
+            return D[p] @ getH(N, p-1, p-2) @ D[p-1].T @ D[p].T
+        elif a == 2 and b == 1:
+            return D[p] @ D[p-1] @ getH(N, p-2, p-1) @ D[p].T
+    elif ndim == 3:
+        a, b, c = args
+        if maxderpartes == maxderoriginal:
+            termo = getH(N, p-a, p-b, p-c)
+            for i in range(p-a, p):
+                termo = np.einsum("ia,ajk->ijk", D[i], termo)
+            for i in range(p-b, p):
+                termo = np.einsum("ia,ajk->ijk", D[i], termo)
+            for i in range(p-c, p):
+                termo = np.einsum("ia,ajk->ijk", D[i], termo)
+
+    raise ValueError(f"For ndim = {ndim}, args = {args}")
 
 def getAlpha(j: int, U: Tuple[float]) -> np.ndarray:
     n = U.npts
@@ -224,9 +301,20 @@ def plot_field(xmesh: Tuple[float], ymesh: Tuple[float], zvals: np.ndarray, ax =
     return ax
     
 
-def solve_system(A: np.ndarray, B: np.ndarray, X: Optional[np.ndarray] = None, X0: Optional[np.ndarray] = None) -> Tuple[np.ndarray, np.ndarray]:
+def solve_system(A: np.ndarray, B: np.ndarray, X: Optional[np.ndarray] = None, X0: Optional[np.ndarray] = None, mask: np.ndarray = None) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Resolve o sistema A * X = B
+    Dado um sistema do tipo [A]*[X] = [B]
+    Queremos encontrar o valor de X
+    Mas alguns valores de X sao conhecidos, chamamos de Xk
+        [Xk] são valores conhecidos
+        [Xu] são valores desconhecidos 
+    de forma que podemos montar o sistema
+        [ [Akk]  [Aku] ]   [ [Xk] ]   [ [Bk] ]
+        [              ] * [      ] = [      ]
+        [ [Auk]  [Auu] ]   [ [Xu] ]   [ [Bu] ]
+    Resolvemos entao
+        [Auu] * [Xu] = [Bu] - [Auk] * [Xk]
+        [Bk] = [Akk] * [Xk] + [Aku] * [Xu]
     Recebe 
         ```A```: Matriz de tamanho (n1, n2, n1, n2)
         ```B```: Matriz de tamanho (n1, n2)
@@ -242,41 +330,36 @@ def solve_system(A: np.ndarray, B: np.ndarray, X: Optional[np.ndarray] = None, X
         if X0.shape != X.shape:
             raise ValueError(f"X0.shape = {X0.shape} != {X.shape} = X.shape")
     if A.ndim != 2*B.ndim:
-        raise ValueError("A.ndim = {A.ndim} != 2*{B.ndim} = 2*B.ndim")
-    if not np.any(np.isnan(X)):
-        raise ValueError("At least one unknown must be given! All values of X are known")
+        raise ValueError(f"A.ndim = {A.ndim} != 2*{B.ndim} = 2*B.ndim")
+    if np.prod(A.shape) != np.prod(B.shape)**2:
+        raise ValueError(f"A.shape = {A.shape} != 2*{B.shape} = 2*B.shape")
+    if mask is None:
+        mask = np.isnan(X)
+    if not np.any(mask):
+        raise ValueError(f"At least one unknown must be given! All values of X are known")
 
+    indexsnan = np.array(np.where(mask)).T
+    indexskno = np.array(np.where(~mask)).T
+    allindexs = np.array(np.where(np.ones(mask.shape, dtype="bool"))).T
+    
     ns = B.shape
     ndim = len(ns)
     ntot = np.prod(ns)
     Aexp = np.zeros((ntot, ntot), dtype="float64")
-    Bexp = np.zeros(ntot, dtype="float64")
-    if ndim == 1:
-        Aexp = np.copy(A)
-        Bexp = np.copy(B)
-        Xexp = np.copy(X)
+    Bexp = np.zeros((ntot), dtype="float64")
+    Xexp = np.zeros((ntot), dtype="float64")
+    X0exp = np.zeros((ntot), dtype="float64")
+    indexs = np.zeros(2*ndim, dtype="int16")
+    for i, indsi in enumerate(allindexs):
+        indexs[::2] = indsi
+        Bexp[i] = B[tuple(indsi)]
+        Xexp[i] = X[tuple(indsi)]
         if X0 is not None:
-            X0exp = np.copy(X0)
-    elif ndim == 2:
-        Aexp = np.zeros((ntot, ntot), dtype="float64")
-        for i in range(ns[0]):
-            for j in range(ns[1]):
-                Aexp[i*ns[1]+j, :] = A[i, :, j, :].reshape(ntot)
-        Bexp = np.copy(B).reshape(ntot)
-        Xexp = np.copy(X).reshape(ntot)
-        if X0 is not None:
-            X0exp = np.copy(X0).reshape(ntot)
-    elif ndim == 3:
-        Aexp = np.zeros((ntot, ntot), dtype="float64")
-        for i in range(ns[0]):
-            for j in range(ns[1]):
-                for k in range(ns[2]):
-                    Aexp[i*ns[2]*ns[1]+j*ns[2]+k, :] = A[i, :, j, :, k].reshape(ntot)
-        Bexp = np.copy(B).reshape(ntot)
-        Xexp = np.copy(X).reshape(ntot)
-        if X0 is not None:
-            X0exp = np.copy(X0).reshape(ntot)
-    mexp = np.isnan(Xexp)
+            X0exp[i] = X0[tuple(indsi)]
+        for j, indsj in enumerate(allindexs):
+            indexs[1::2] = indsj
+            Aexp[i, j] = A[tuple(indexs)]
+    mexp = mask.reshape(ntot)
     Auu = np.delete(np.delete(Aexp, ~mexp, axis=0), ~mexp, axis=1)
     Aku = np.delete(np.delete(Aexp, mexp, axis=0), ~mexp, axis=1)
     Auk = np.delete(np.delete(Aexp, ~mexp, axis=0), mexp, axis=1)
@@ -292,6 +375,110 @@ def solve_system(A: np.ndarray, B: np.ndarray, X: Optional[np.ndarray] = None, X
     X = Xexp.reshape(ns)
     B = Bexp.reshape(ns)
     return X, B
+
+def invert_matrix(A: np.ndarray, X: np.ndarray = None, mask: np.ndarray = None):
+    """
+    Dado um sistema do tipo [A]*[X] = [B]
+    Queremos encontrar o valor de X
+    Mas alguns valores de X sao conhecidos, chamamos de Xk
+        [Xk] são valores conhecidos
+        [Xu] são valores desconhecidos 
+    de forma que podemos montar o sistema
+        [ [Akk]  [Aku] ]   [ [Xk] ]   [ [Bk] ]
+        [              ] * [      ] = [      ]
+        [ [Auk]  [Auu] ]   [ [Xu] ]   [ [Bu] ]
+    Resolvemos entao
+        [Auu] * [Xu] = [Bu] - [Auk] * [Xk]
+        [Bk] = [Akk] * [Xk] + [Aku] * [Xu]
+    Em que [Bk] eh o vetor de forcas desconhecidas, mas frequentemente nao usado
+    Contudo, existe todo um trabalho:
+        * Cortar a matrizes [Akk], [Aku], [Auk], [Auu]
+        * Cortar as matrizes [Bu]
+        * Resolver o sistema [Auu] * [Xu] = [Bu] - [Auk] * [Xk]
+        * Calcular [Bk] = [Akk] * [Xk] + [Aku] * [Xu]
+    E que pode ser custoso se formo fazer toda vez!
+    Essa funcao entao calcula a inversa de [A] que satisfaca as condicoes de contorno
+        [Xu] = [Auu]^{-1} * ([Bu] - [Auk] * [Xk])
+             = [Auu]^{-1} * [Bu] + (-[Auu]^{-1} * [Auk]) * [Xk]
+             = [M] * [Xk] + [N] * [Bu]
+        [Bk] = [Akk] * [Xk] + [Aku] * [Auu]^{-1} * ([Bu] - [Auk] * [Xk])
+             = ([Akk] - [Aku] * [Auu]^{-1} * [Auk]) * [Xk] + [Aku] * [Auu]^{-1} * [Bu]
+             = [F] * [Xk] + [G] * [Bu]
+        # [G] = [Aku] * [Auu]^{-1}
+        # [F] = [Akk] - [Aku] * [Auu]^{-1} * [Auk]
+        # [M] = -[Auu]^{-1} * [Auk]
+        # [N] = [Auu]^{-1}
+        # [Xu] = [M] * [Xk] + [N] * [Bu]
+        # [Bk] = [F] * [Xk] + [G] * [Bu]
+        # [X] = [iXX] * [X] + [iXB] * [B]
+        # [B] = [iBX] * [X] + [iBB] * [B]
+    Logo, da pra escrever algo como
+        [X] = [iXX] * [X] + [iXB] * [B]
+        [B] = [iBX] * [X] + [iBB] * [B]
+    Entao essa funcao retorna matrizes
+        [iXX, iXB], [iBX, iBB]
+    """
+    ns = A.shape[::2]
+    if X is None:
+        X = np.empty(ns, dtype="float64")
+        X.fill(np.nan)
+    elif A.ndim != 2*X.ndim:
+        raise ValueError(f"A.ndim = {A.ndim} != 2*{X.ndim} = 2*X.ndim")
+    elif np.prod(A.shape) != np.prod(X.shape)**2:
+        raise ValueError(f"A.shape = {A.shape} != 2*{X.shape} = 2*X.shape")
+    if mask is None:
+        mask = np.isnan(X)
+    if not np.any(mask):
+        raise ValueError(f"At least one unknown must be given! All values of X are known")
+
+    indexsnan = np.array(np.where(mask)).T
+    indexskno = np.array(np.where(~mask)).T
+    allindexs = np.array(np.where(np.ones(mask.shape, dtype="bool"))).T
+    
+    ndim = len(ns)
+    ntot = np.prod(ns)
+    Aexp = np.zeros((ntot, ntot), dtype="float64")
+    indexs = np.zeros(2*ndim, dtype="int16")
+    for i, indsi in enumerate(allindexs):
+        for j, indsj in enumerate(allindexs):
+            indexs[::2] = indsi
+            indexs[1::2] = indsj
+            Aexp[i, j] = A[tuple(indexs)]
+    mexp = mask.reshape(ntot)
+    Auu = np.delete(np.delete(Aexp, ~mexp, axis=0), ~mexp, axis=1)
+    Aku = np.delete(np.delete(Aexp, mexp, axis=0), ~mexp, axis=1)
+    Auk = np.delete(np.delete(Aexp, ~mexp, axis=0), mexp, axis=1)
+    Akk = np.delete(np.delete(Aexp, mexp, axis=0), mexp, axis=1)
+    N = np.linalg.inv(Auu)
+    M = -N @ Auk
+    G = Aku @ N
+    F = Akk - G @ Auk
+    iXX = np.zeros(A.shape, dtype="float64")
+    iXB = np.zeros(A.shape, dtype="float64")
+    iBX = np.zeros(A.shape, dtype="float64")
+    iBB = np.zeros(A.shape, dtype="float64")
+    indexsmat = np.zeros(2*ndim, dtype="int16")
+    for i, indsi in enumerate(indexskno):
+        indexsmat[::2] = indsi
+        indexsmat[1::2] = indsi
+        iXX[tuple(indexsmat)] = 1
+    for i, indsi in enumerate(indexsnan):  # find X
+        indexsmat[::2] = indsi
+        for j, indsj in enumerate(indexskno):  # Use X
+            indexsmat[1::2] = indsj
+            iXX[tuple(indexsmat)] = M[i, j]
+        for j, indsj in enumerate(indexsnan):  # Use B
+            indexsmat[1::2] = indsj
+            iXB[tuple(indexsmat)] = N[i, j]
+    # for i, indsi in enumerate(indexskno):  # find B
+    #     indexsmat[::2] = indsi
+    #     for j, indsj in enumerate(indexskno):  # Use X
+    #         indexsmat[1::2] = indsj
+    #         iBX[tuple(indexsmat)] = F[i, j]
+    #     for j, indsj in enumerate(indexsnan):  # Use B
+    #         indexsmat[1::2] = indsj
+    #         iBB[tuple(indexsmat)] = G[i, j]
+    return ((iXX, iXB), (iBX, iBB))
 
 def GaussSeidel(A: np.ndarray, B: np.ndarray, X0: np.ndarray, atol: float = 1e-9, verbose = False) -> Tuple[np.ndarray, int]:
     n = len(B)
@@ -368,147 +555,92 @@ def get_random_matrix_definite_positive(side: int):
     return A
 
 
+class TestingAuxiliarFunctions:
 
-def main_test_solve_system():
-    aproximacao = True
-
-    ntests = 200
-    for kkk in tqdm(range(ntests)):
-        n1 = np.random.randint(4, 9)
-        A = get_random_matrix_definite_positive(n1)
-        Xgood = np.random.rand(n1)
-        B = np.einsum("ij,j->i", A, Xgood)
-        BCs = np.zeros(n1, dtype="bool")
-        allchoices = [a for a in range(n1)]
-        numbers = default_rng().choice(allchoices, size=np.random.randint(1, n1), replace=False)
-        for i in numbers:
-            BCs[i] = True
-        Xboundary = np.empty(n1)
-        Xboundary.fill(np.nan)
-        Xboundary[BCs] = Xgood[BCs]
-        if aproximacao:
-            Xinit = Xgood+0.01*np.random.rand(n1)
-            Xinit[BCs] = Xgood[BCs]
-            X1, _ = solve_system(A, B, Xboundary, Xinit)
-        else:
-            X1, _ = solve_system(A, B, Xboundary)
-        mexp = np.isnan(Xboundary)
-        np.testing.assert_almost_equal(X1[~mexp], Xgood[~mexp])
-        np.testing.assert_almost_equal(X1[mexp], Xgood[mexp])
-
-    for kkk in tqdm(range(ntests)):
-        ns = np.random.randint(4, 9, size=2)
+    @staticmethod
+    def create_random_linsys(ns: Tuple[int]):
+        ndim = len(ns)
         ntot = np.prod(ns)
+        Xgood = np.random.rand(*ns)
+        masknan = np.zeros(ns, dtype="bool")
+        numnan = np.random.randint(1, ntot)
+        tempinds = np.zeros(ndim, dtype="int16")
+        while np.sum(masknan) < numnan:
+            for i, ni in enumerate(ns):
+                tempinds[i] = np.random.randint(ni)
+            masknan[tuple(tempinds)] = True
+        Xboundary = np.copy(Xgood)
+        Xboundary[masknan] = np.nan
 
-        BCs = np.zeros(ns, dtype="bool")
-        allchoices = []
-        for a in range(ns[0]):
-            for b in range(ns[1]):
-                allchoices.append((a, b))
-        numbers = default_rng().choice(allchoices, size=np.random.randint(1, ntot), replace=False)
-        for i, j in numbers:
-            BCs[i, j] = True
-        
-        Aexp = get_random_matrix_definite_positive(ntot)
-        Aexp = np.around(Aexp, 3)
-        A = np.zeros((ns[0], ns[0], ns[1], ns[1]), dtype="float64")
-        Xgood = np.around(np.random.rand(*ns), 1)
-        B = np.zeros((ns[0], ns[1]), dtype="float64")
-        for i in range(ns[0]):
-            for j in range(ns[1]):
-                A[i, :, j, :] = Aexp[i*ns[1]+j, :].reshape(ns)
-        for i in range(ns[0]):
-            for j in range(ns[1]):
-                B[i, j] += np.tensordot(A[i, :, j, :], Xgood, axes=2)
-        Xexpgood = np.zeros((ntot), dtype="float64")
-        Bexp = np.zeros(ntot, dtype="float64")
-        for i in range(ns[0]):
-            for j in range(ns[1]):
-                Xexpgood[i*ns[1]+j] = Xgood[i, j]
-                Bexp[i*ns[1]+j] = B[i, j]
-        
-        Xboundary = np.empty(ns)
-        Xboundary.fill(np.nan)
-        Xboundary[BCs] = Xgood[BCs]
+        allindexs = np.array(np.where(~np.isnan(Xgood))).T
 
-        Aexptest = np.zeros((ntot, ntot), dtype="float64")
-        Bexptest = B.reshape(ntot)
-        np.testing.assert_almost_equal(Bexptest, Bexp)
-        
-        assert np.all( np.abs(Aexp @ Xexpgood - Bexp) < 1e-6)
-
-        if aproximacao:
-            Xinit = Xgood+0.01*np.random.rand(*ns)
-            Xinit[BCs] = Xboundary[BCs]
-            X1, _ = solve_system(A, B, Xboundary, Xinit)
-        else:
-            X1, _ = solve_system(A, B, Xboundary)
-        
-        mexp = np.isnan(Xboundary)
-        np.testing.assert_almost_equal(X1[~mexp], Xgood[~mexp])
-        np.testing.assert_almost_equal(X1[mexp], Xgood[mexp])
-        # np.testing.assert_almost_equal(X1, Xgood)
-
-    for kkk in tqdm(range(ntests)):
-        ns = np.random.randint(4, 9, size=3)
-        ntot = np.prod(ns)
-
-        BCs = np.zeros(ns, dtype="bool")
-        allchoices = []
-        for a in range(ns[0]):
-            for b in range(ns[1]):
-                for c in range(ns[2]):
-                    allchoices.append((a, b, c))
-        numbers = default_rng().choice(allchoices, size=np.random.randint(1, ntot), replace=False)
-        for i, j, k in numbers:
-            BCs[i, j, k] = True
-        
-        Aexp = get_random_matrix_definite_positive(ntot)
-        Aexp = np.around(Aexp, 3)
-        A = np.zeros((ns[0], ns[0], ns[1], ns[1], ns[2], ns[2]), dtype="float64")
-        Xgood = np.around(np.random.rand(*ns), 1)
-        B = np.zeros(ns, dtype="float64")
-        for i in range(ns[0]):
-            for j in range(ns[1]):
-                for k in range(ns[2]):
-                    A[i, :, j, :, k, :] = Aexp[i*ns[1]*ns[2]+j*ns[2]+k, :].reshape(ns)
-        for i in range(ns[0]):
-            for j in range(ns[1]):
-                for k in range(ns[2]):
-                    B[i, j, k] += np.tensordot(A[i, :, j, :, k, :], Xgood, axes=3)
-        Xexpgood = np.zeros((ntot), dtype="float64")
-        Bexp = np.zeros(ntot, dtype="float64")
-        for i in range(ns[0]):
-            for j in range(ns[1]):
-                for k in range(ns[2]):
-                    Xexpgood[i*ns[1]*ns[2]+j*ns[2]+k] = Xgood[i, j, k]
-                    Bexp[i*ns[1]*ns[2]+j*ns[2]+k] = B[i, j, k]
-        
-        Xboundary = np.empty(ns)
-        Xboundary.fill(np.nan)
-        Xboundary[BCs] = Xgood[BCs]
-
-        Aexptest = np.zeros((ntot, ntot), dtype="float64")
-        Bexptest = B.reshape(ntot)
-        np.testing.assert_almost_equal(Bexptest, Bexp)
-        
-        assert np.all( np.abs(Aexp @ Xexpgood - Bexp) < 1e-6)
-
-        if aproximacao:
-            Xinit = Xgood+0.1*np.random.rand(*ns)
-            Xinit[BCs] = Xboundary[BCs]
-            X1, _ = solve_system(A, B, Xboundary, Xinit)
-        else:
-            X1, _ = solve_system(A, B, Xboundary)
-        mexp = np.isnan(Xboundary)
-        np.testing.assert_almost_equal(X1[~mexp], Xgood[~mexp])
-        np.testing.assert_almost_equal(X1[mexp], Xgood[mexp])
+        Bsystem = np.zeros(Xgood.shape, dtype="float64")
+        Aexpanded = get_random_matrix_definite_positive(ntot)
+        shapeA = [item for ni in ns for item in 2*[ni]]
+        Asystem = np.zeros(shapeA, dtype="float64")
+        for i, indsi in enumerate(allindexs):
+            value = 0
+            for j, indsj in enumerate(allindexs):
+                value += Aexpanded[i,j] * Xgood[tuple(indsj)]
+                indexAsys = [item for sublist in zip(indsi, indsj) for item in sublist]
+                Asystem[tuple(indexAsys)] = Aexpanded[i, j]
+            Bsystem[tuple(indsi)] = value
+        return Asystem, Bsystem, Xboundary, Xgood
 
 
-def test_matrix():
-    n, p = 3, 2
-    U = nurbs.GeneratorKnotVector.uniform(p, n)
-    N = nurbs.SplineBaseFunction(U)
-    H = getH(N, 2, 1)
+def main_test_solve_direct_system():
+    ntests = 100
+    for ndim in [1, 2, 3, 4, 5]:
+        for kkk in tqdm(range(ntests)):
+            ns = np.array(np.random.randint(2, 4, size=ndim), dtype="int16").tolist()
+            Asystem, Bsystem, Xboundary, Xgood = TestingAuxiliarFunctions.create_random_linsys(ns)
+            
+            Xtest = solve_system(Asystem, Bsystem, Xboundary)[0]
+            np.testing.assert_almost_equal(Xtest, Xgood)
+
+def main_test_iterative_solve_system():
+    ntests = 100
+    flutuation = 0.01
+    for ndim in [1, 2, 3]:
+        for kkk in tqdm(range(ntests)):
+            ns = np.array(np.random.randint(2, 4, size=ndim), dtype="int16").tolist()
+            Asystem, Bsystem, Xboundary, Xgood = TestingAuxiliarFunctions.create_random_linsys(ns)
+            masknan = np.isnan(Xboundary)
+
+            Xinit = Xgood + flutuation*(2*np.random.rand()-1)
+            Xinit[~masknan] = Xgood[~masknan]
+            Xtest = solve_system(Asystem, Bsystem, Xboundary, Xinit)[0]
+            np.testing.assert_almost_equal(Xtest[~masknan], Xgood[~masknan])
+            np.testing.assert_almost_equal(Xtest[masknan], Xgood[masknan])
+            np.testing.assert_almost_equal(Xtest, Xgood)
+
+def main_test_invert_matrix():
+    ntests = 100
+    for ndim in [1, 2, 3, 4, 5]:
+        for kkk in tqdm(range(ntests)):
+            ns = np.array(np.random.randint(2, 4, size=ndim), dtype="int16").tolist()
+            Asystem, Bsystem, Xboundary, Xgood = TestingAuxiliarFunctions.create_random_linsys(ns)
+            
+            iXX, iXB = invert_matrix(Asystem, Xboundary)[0]
+            Xboundary[np.isnan(Xboundary)] = 0
+            if ndim == 1:
+                Xtest = np.einsum("ia,a->i", iXX, Xboundary)
+                Xtest += np.einsum("ia,a->i", iXB, Bsystem)
+            if ndim == 2:
+                Xtest = np.einsum("iajb,ab->ij", iXX, Xboundary)
+                Xtest += np.einsum("iajb,ab->ij", iXB, Bsystem)
+            if ndim == 3:
+                Xtest = np.einsum("iajbkc,abc->ijk", iXX, Xboundary)
+                Xtest += np.einsum("iajbkc,abc->ijk", iXB, Bsystem)
+            if ndim == 4:
+                Xtest = np.einsum("iajbkcld,abcd->ijkl", iXX, Xboundary)
+                Xtest += np.einsum("iajbkcld,abcd->ijkl", iXB, Bsystem)
+            if ndim == 5:
+                Xtest = np.einsum("iajbkcldpe,abcde->ijklp", iXX, Xboundary)
+                Xtest += np.einsum("iajbkcldpe,abcde->ijklp", iXB, Bsystem)
+            np.testing.assert_almost_equal(Xtest, Xgood)
+
 if __name__ == "__main__":
-    test_matrix()
+    # main_test_iterative_solve_system()
+    main_test_solve_direct_system()
+    main_test_invert_matrix()
