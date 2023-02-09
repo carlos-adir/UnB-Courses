@@ -3,19 +3,23 @@ from matplotlib import pyplot as plt
 from typing import Tuple
 from tqdm import tqdm
 from numba import jit
+from cavidadetovtk import Saver
+from compmec import nurbs
 
 np.set_printoptions(precision=2, suppress=True)
 
-nx, ny, nt = 7, 7, 10001
+nx, ny, nt = 31, 31, 1000001
+ntsave = 101
 xmin, xmax = 0, 1
 ymin, ymax = 0, 1
-tmin, tmax = 0, 1
-xmesh = np.linspace(0, 1, nx)
-ymesh = np.linspace(0, 1, ny)
-tmesh = np.linspace(0, 1, nt)
+tmin, tmax = 0, 3
+xmesh = np.linspace(xmin, xmax, nx)
+ymesh = np.linspace(ymin, ymax, ny)
+# tmesh = np.linspace(tmin, tmax, nt)
+tsavemesh = np.linspace(tmin, tmax, ntsave)
 dx, dy = 1/(nx-1), 1/(ny-1)
 dt = (tmax-tmin)/(nt-1) 
-Re = 1  # Reynolds
+Re = 700  # Reynolds
 
 if dx < dt:
     raise ValueError("The value of dx is less than dt! dx = %.1e, dt = %.1e" % (dx, dt))
@@ -38,6 +42,9 @@ def verify_has_nan_inf(value: np.ndarray, name: str):
 u = np.zeros((nx, ny+1), dtype="float64")
 v = np.zeros((nx+1, ny), dtype="float64")
 p = np.zeros((nx+1, ny+1), dtype="float64")
+Uf = np.zeros((ntsave, nx, ny), dtype="float64")
+Vf = np.zeros((ntsave, nx, ny), dtype="float64")
+Pf = np.zeros((ntsave, nx, ny), dtype="float64")
 ustar = np.copy(u)
 vstar = np.copy(v)
 
@@ -129,7 +136,7 @@ def compute_matrix2D(matrix2D, diagon2D):
 
 # @jit(nopython=True)  
 def compute_pressure(matrix2D, diagon2Dx, diagon2Dy, p):
-    TOLERANCE = 1e-9
+    TOLERANCE = 1e-6
     ITERMAX = 200
     iter = 0
     while True:
@@ -150,6 +157,7 @@ def compute_pressure(matrix2D, diagon2Dx, diagon2Dy, p):
                 else:
                     R -= diagon2Dy[i, j]*(p[i, j-1] - 2*p[i, j] + p[i, j+1])
                 p[i, j] += R
+                print("abs(R) = %.2e"%np.abs(R))
                 breaklooptolerance *= np.abs(R) < TOLERANCE
         if breaklooptolerance:
             break
@@ -159,7 +167,8 @@ def compute_pressure(matrix2D, diagon2Dx, diagon2Dy, p):
             print(error)
             # break
             raise ValueError
-    p[0:nx-1, -1] = p[0:nx-1, 0]
+    for i in range(nx-1):
+        p[i, -1] = p[i, 0]
     p[0:nx-1, ny-1] = p[0:nx-1, ny-2]
     p[-1, :] = p[0, :]
     p[nx-1, :] = p[nx-2, :]
@@ -195,37 +204,35 @@ if __name__ == "__main__":
     Uupper = 2*U(xmesh)
     u[:,ny-1] = Uupper[:]  # Boundary condition
     try:
-        for k, tk in enumerate(tqdm(tmesh)):
+        Uf[0] = 0.5*(u[:, 1:]+u[:, :-1])
+        Vf[0] = 0.5*(v[1:, :]+v[:-1, :])
+        Pf[0] = 0.25*(p[1:, 1:]+p[:-1, :-1]+p[:-1, 1:]+p[1:, :-1])
+        counter_save = 0
+        for k in tqdm(range(nt-1)):
             compute_ustar(u, divu, meanv, ustar, Uupper)
             compute_vstar(v, divv, meanu, vstar)
             compute_matrix2D(matrix2D, diagon2D)
             p = compute_pressure(matrix2D, diagon2Dx, diagon2Dy, p)
             compute_newu(ustar, p, u)
             compute_newv(vstar, p, v)
+            if k*dt > tsavemesh[counter_save+1]:
+                Uf[counter_save+1] = 0.5*(u[:, 1:]+u[:, :-1])
+                Vf[counter_save+1] = 0.5*(v[1:, :]+v[:-1, :])
+                Pf[counter_save+1] = 0.25*(p[1:, 1:]+p[:-1, :-1]+p[:-1, 1:]+p[1:, :-1])
+                counter_save += 1
     except KeyboardInterrupt as error:
         pass
     except Exception as error:
-        print("Exited at time: %.2f/%.2f" % (tk, tmax))
+        print("Exited at time: %.2f/%.2f" % (tmin+k*dt, tmax))
         print("Error = ", error)
-        raise error
-        
-        print("nx, ny, nt = %02d, %02d, %02d" % (nx, ny, nt))
-        print("dx, dy, dt = %.2f, %.2f, %.2f" % (dx, dy, dt))
-        
     finally:
-        np.save(f"u-nt{nt}.npy", u)
-        np.save(f"v-nt{nt}.npy", v)
-        np.save(f"p-nt{nt}.npy", p)
-        np.save(f"ustar-nt{nt}.npy", ustar)
-        np.save(f"vstar-nt{nt}.npy", vstar)
-    print(f"ustar[{k}] = ")
-    print(ustar.T[::-1])
-    print(f"vstar[{k}] = ")
-    print(vstar.T[::-1])
-    print(f"p[{k}] = ")
-    print(p.T[::-1])
-    print(f"u[{k}] = ")
-    print(u.T[::-1])
-    print(f"v[{k}] = ")
-    print(v.T[::-1])
         
+        filename = "data_%dRe.xdmf"%int(round(Re))
+        file = Saver(filename)
+        file.Ux = np.linspace(xmin, xmax, nx)
+        file.Uy = np.linspace(ymin, ymax, ny)
+        file.Ut = np.linspace(tmin, tmax, ntsave)
+        file.U = Uf
+        file.V = Vf
+        file.P = Pf
+        file.save()

@@ -151,14 +151,18 @@ def getH(N: nurbs.SplineBaseFunction, *args: Tuple[int]):
     raise ValueError
 
 
-def getD(j: int, U: Tuple[float]):
+def getAlpha(j: int, U: Tuple[float]) -> np.ndarray:
     n = U.npts
     alpha = np.zeros(n, dtype="float64")
     for i in range(n):
         if U[i+j] != U[i]:
             alpha[i] = j/(U[i+j]-U[i])
+    return alpha
+
+def getD(j: int, U: Tuple[float]) -> np.ndarray:
+    alpha = getAlpha(j, U)
     Dj = np.diag(alpha)
-    for i in range(n-1):
+    for i in range(U.npts-1):
         Dj[i,i+1] = -alpha[i+1]
     return Dj
 

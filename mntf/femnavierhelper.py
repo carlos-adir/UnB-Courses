@@ -8,7 +8,12 @@ class Fit:
 
     @staticmethod
     def spline_curve(N: nurbs.SplineBaseFunction, f: Callable[[float], float], BCvals: np.ndarray=None) -> np.array:
-        tsample = np.linspace(0, 1, 4*N.npts)
+        tsample = []
+        knots = N.knotvector.knots
+        for ta, tb in zip(knots[:-1], knots[1:]):
+            tsample.extend(np.linspace(ta, tb, 5, endpoint=False))
+        tsample.append(1)
+        tsample = np.array(tsample)
         Lt = N(tsample)
         F = np.array([f(ti) for ti in tsample], dtype="float64")
         if BCvals is None:
@@ -41,8 +46,19 @@ class Fit:
     @staticmethod
     def spline_surface(Nx: nurbs.SplineBaseFunction, Ny: nurbs.SplineBaseFunction, f: Callable[[float, float], float], BCvals: np.ndarray = None) -> np.array:
         nx, ny = Nx.npts, Ny.npts
-        xsample = np.linspace(0, 1, 2*nx+1)
-        ysample = np.linspace(0, 1, 2*ny+1)
+        xsample = []
+        ysample = []
+        xknots = Nx.knotvector.knots
+        yknots = Ny.knotvector.knots
+        for ta, tb in zip(xknots[:-1], xknots[1:]):
+            xsample.extend(np.linspace(ta, tb, 5, endpoint=False))
+        for ta, tb in zip(yknots[:-1], yknots[1:]):
+            ysample.extend(np.linspace(ta, tb, 5, endpoint=False))
+        xsample.append(1)
+        xsample = np.array(xsample)
+        ysample.append(1)
+        ysample = np.array(ysample)
+
         nxs, nys = len(xsample), len(ysample)
         F = np.zeros((nxs, nys), dtype="float64")
         for i, xi in enumerate(xsample):
@@ -176,28 +192,34 @@ def alpha(U: Tuple[float], i: int, j: int):
     return j/(U[i+j]-U[i])
 
 
-def plot_all_fields(Nx: nurbs.SplineBaseFunction, Ny: nurbs.SplineBaseFunction, S = None, U = None, V = None, W = None, P=None):
+def plot_all_fields(Nx: nurbs.SplineBaseFunction, Ny: nurbs.SplineBaseFunction, S):
     xplot = np.linspace(0, 1, 1025)
     yplot = np.linspace(0, 1, 1025)
-    Lx = Nx(xplot)
-    Ly = Ny(yplot)
+    px, nx = Nx.degree, Nx.npts
+    py, ny = Ny.degree, Ny.npts
+    Dpx = getD(px, Nx.knotvector)
+    Dpx1 = getD(px-1, Nx.knotvector)
+    Dpy = getD(py, Ny.knotvector)
+    Dpy1 = getD(py-1, Ny.knotvector)
+    Lx = Nx[:, px](xplot)
+    dLx = Dpx @ Nx[:, px-1](xplot)
+    ddLx = Dpx @ Dpx1 @ Nx[:, px-2](xplot)
+    Ly = Ny[:, py](yplot)
+    dLy = Dpy @ Ny[:, py-1](yplot)
+    ddLy = Dpy @ Dpy1 @ Ny[:, py-2](yplot)
 
     fig, axes = plt.subplots(1, 5, figsize=(16, 4))
-    if S is not None:
-        zplot = Lx.T @ S @ Ly
-        plot_field(xplot, yplot, zplot, contour=True, ax=axes[0])
-    if U is not None:
-        zplot = Lx.T @ U @ Ly
-        plot_field(xplot, yplot, zplot, contour=True, ax=axes[1])
-    if V is not None:
-        zplot = Lx.T @ V @ Ly
-        plot_field(xplot, yplot, zplot, contour=True, ax=axes[2])
-    if W is not None:
-        zplot = Lx.T @ W @ Ly
-        plot_field(xplot, yplot, zplot, contour=True, ax=axes[3])
-    if P is not None:
-        zplot = Lx.T @ P @ Ly
-        plot_field(xplot, yplot, zplot, contour=True, ax=axes[4])
+
+    splot = Lx.T @ S @ Ly
+    plot_field(xplot, yplot, splot, contour=True, ax=axes[0])
+    uplot = Lx.T @ S @ dLy  # U
+    plot_field(xplot, yplot, uplot, contour=True, ax=axes[1])
+    vplot = dLx.T @ S @ dLy  # V
+    plot_field(xplot, yplot, vplot, contour=True, ax=axes[2])
+    wplot = -(ddLx.T @ S @ Ly + Lx.T @ S @ ddLy)  # W
+    plot_field(xplot, yplot, wplot, contour=True, ax=axes[3])
+    # zplot = Lx.T @ P @ Ly
+    # plot_field(xplot, yplot, zplot, contour=True, ax=axes[4])
     axes[0].set_title(r"Linha de corrente $S$")
     axes[1].set_title(r"Horizontal speed $u$")
     axes[2].set_title(r"Vertical speed $v$")
@@ -208,8 +230,8 @@ def plot_all_fields(Nx: nurbs.SplineBaseFunction, Ny: nurbs.SplineBaseFunction, 
         # axes[i].set_ylabel(r"Dimensao $y$")
         axes[i].set_xlim(0, 1)
         axes[i].set_ylim(0, 1)
-        [axes[i].axvline(x=xi, ls="dotted", color="k") for xi in list(set(Nx.knotvector))[1:-1]]
-        [axes[i].axhline(y=yj, ls="dotted", color="k") for yj in list(set(Ny.knotvector))[1:-1]]
+        # [axes[i].axvline(x=xi, ls="dotted", color="k") for xi in list(set(Nx.knotvector))[1:-1]]
+        # [axes[i].axhline(y=yj, ls="dotted", color="k") for yj in list(set(Ny.knotvector))[1:-1]]
 
 
 if __name__ == "__main__":
