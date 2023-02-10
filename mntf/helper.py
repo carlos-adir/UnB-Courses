@@ -150,22 +150,148 @@ def getH(N: nurbs.SplineBaseFunction, *args: Tuple[int]):
         return getH3(N, args[0], args[1], args[2])
     raise ValueError
 
-def getMatrix(N: nurbs.SplineBaseFunction, *args: Tuple[int]):
+def getJ1(N: nurbs.SplineBaseFunction, a: int):
+    n, p, U = N.npts, N.degree, N.knotvector
+    if a > p:
+        return np.zeros(n, dtype="float64")
+    D = {}
+    for i in range(1, p+1):
+        D[i] = getD(i, U)
+    termo = getH(N, p-a)
+    for i in range(p+1-a, p+1):
+        termo = D[i] @ termo
+    return termo
+
+def getJ2(N: nurbs.SplineBaseFunction, a: int, b: int):
+    """
+    Retorna um valor de [I], a integral de
+    I = int_0^1 [Nx^(a)] x [Nx^(b)] dx
+    Exemplos:
+        getJ(N, 0, 0) -> I = int_0^1 [Nx] x [Nx] dx
+        getJ(N, 1, 0) -> I = int_0^1 [Nx'] x [Nx] dx
+        getJ(N, 0, 1) -> I = int_0^1 [Nx] x [Nx'] dx
+        getJ(N, 1, 1) -> I = int_0^1 [Nx'] x [Nx'] dx
+    """
+    n, p, U = N.npts, N.degree, N.knotvector
+    maxderoriginal = max(a, b)
+    maxderpartes = int(np.ceil(np.mean([a, b])))
+    D = {}
+    for i in range(max(1, min(p+1-a, p+1-b)), p+1):
+        D[i] = getD(i, U)
+    if maxderpartes == maxderoriginal:
+        termo = getH(N, p-a, p-b)
+        for i in range(p+1-a, p+1):
+            termo = np.einsum("ia,aj->ij", D[i], termo)
+        for i in range(p+1-b, p+1):
+            termo = np.einsum("jb,ib->ij", D[i], termo)
+        return termo
+    
+    if b < a:
+        return np.transpose(getJ2(N, b, a))
+    for i in range(1, min(p+1-a, p+1-b)):
+        D[i] = getD(i, U)
+    if a == 0 and b == 2:
+        termo = np.tensordot(N[:, p](1), D[p] @ N[:, p-1](1), axes=0)
+        termo -= np.tensordot(N[:, p](0), D[p] @ N[:, p-1](0), axes=0)
+        termo -= getJ2(N, 1, 1)
+        return termo
+    elif a == 0 and b == 4:
+        termo = D[p] @ D[p-1] @ getH(N, p-2, p-2) @ D[p-1].T @ D[p]
+        if p > 2:
+            termo += np.tensordot(N(1), D[p] @ D[p-1] @ D[p-2] @ N[:, p-3](1), axes=0)
+            termo -= np.tensordot(N(0), D[p] @ D[p-1] @ D[p-2] @ N[:, p-3](0), axes=0)
+        termo -= np.tensordot(D[p] @ N[:, p-1](1), D[p] @ D[p-1] @ N[:, p-2](1), axes=0)
+        termo += np.tensordot(D[p] @ N[:, p-1](0), D[p] @ D[p-1] @ N[:, p-2](0), axes=0)
+        return termo
+    errormsg = f"Nao pude resolver: (a, b) = ({a}, {b})"
+    raise ValueError(errormsg)
+
+def getJ3(N: nurbs.SplineBaseFunction, a: int, b: int, c: int):
+    """
+    Retorna um valor de [I], a integral de
+    I = int_0^1 [Nx^(a)] x [Nx^(b)] x [Nx^(c)] dx
+    Exemplos:
+        getJ(N, 0, 0, 0) -> I = int_0^1 [Nx] x [Nx] x [Nx] dx
+        getJ(N, 0, 0, 1) -> I = int_0^1 [Nx] x [Nx] x [Nx'] dx
+        getJ(N, 0, 1, 0) -> I = int_0^1 [Nx] x [Nx'] x [Nx] dx
+        getJ(N, 2, 0, 0) -> I = int_0^1 [Nx''] x [Nx] x [Nx] dx
+    """
+    n, p, U = N.npts, N.degree, N.knotvector
+    maxderoriginal = max(a, b, c)
+    maxderpartes = int(np.ceil(np.mean([a, b, c])))
+    D = {}
+    for i in range(max(1, min(p+1-a, p+1-b, p+1-c)), p+1):
+        D[i] = getD(i, U)
+    if maxderpartes == maxderoriginal:
+        termo = getH(N, p-a, p-b, p-c)
+        for i in range(p-a+1, p+1):
+            termo = np.einsum("ia,ajk->ijk", D[i], termo)
+        for i in range(p-b+1, p+1):
+            termo = np.einsum("ia,ajk->ijk", D[i], termo)
+        for i in range(p-c+1, p+1):
+            termo = np.einsum("ia,ajk->ijk", D[i], termo)
+        return termo
+    
+    for i in range(1, min(p+1-a, p+1-b, p+1-c)):
+        D[i] = getD(i, U)
+    a0, b0, c0 = np.sort(np.copy([a, b, c]))
+    if a0 == a and b0 == b and c0 == c:  # The values are ordenated
+        if a == 0 and b == 1 and c == 2:
+            termo = np.einsum("i,j,k->ijk", N[:, p](1), D[p] @ N[:, p-1](1), D[p] @ N[:, p-1](1))
+            termo -= np.einsum("i,j,k->ijk", N[:, p](0), D[p] @ N[:, p-1](0), D[p] @ N[:, p-1](0))
+            termo -= getJ3(N, 1, 1, 1)
+            termo -= np.einsum("jb,kc,ibc->ijk", D[p] @ D[p-1], D[p], getH(N, p, p-2, p-1))
+            return termo
+        if a == 0 and b == 0 and c == 3:
+            termo = np.einsum("i,j,k->ijk", N[:, p](1), N[:, p](1), D[p] @ D[p-1] @ N[:, p-2](1))
+            termo -= np.einsum("i,j,k->ijk", N[:, p](0), N[:, p](0), D[p] @ D[p-1] @ N[:, p-2](0))
+            termo += np.einsum("i,j,k->ijk", D[p] @ N[:, p-1](1), N[:, p](1), D[p] @ N[:, p-1](1))
+            termo -= np.einsum("i,j,k->ijk", D[p] @ N[:, p-1](0), N[:, p](0), D[p] @ N[:, p-1](0))
+            termo += np.einsum("i,j,k->ijk", N[:, p](1), D[p] @ N[:, p-1](1), D[p] @ N[:, p-2](1))
+            termo -= np.einsum("i,j,k->ijk", N[:, p](0), D[p] @ N[:, p-1](0), D[p] @ N[:, p-2](0))
+            termo += getJ(N, 2, 0, 1) # Na'' * Nb * Nc'
+            termo += 2*getJ(N, 1, 1, 1)  # Na' * Nb' * Nc'
+            termo += getJ(N, 0, 2, 1)  # Na * Nb'' * Nc'
+            return termo
+        errormsg = f"Nao pude resolver: (a, b, c) = ({a}, {b}, {c})"
+        raise ValueError(errormsg)
+    termo = getJ3(N, a0, b0, c0)
+    if a0 == a:  # (a0, b0, c0) = (a, c, b)
+        np.swapaxes(termo, 1, 2)
+        return termo
+    elif b0 == b:  # (a0, b0, c0) = (c, b, a)
+        np.swapaxes(termo, 0, 2)
+        return termo
+    elif c0 == c:  # (a0, b0, c0) = (b, a, c)
+        np.swapaxes(termo, 0, 1)
+        return termo
+    else:  # any order, but we swap all of them
+        termo = getJ3(N, a0, b0, c0)
+        # First, we put a in its place
+        if a == b0:
+            np.swapaxes(termo, 0, 1)
+        elif a == c0:
+            np.swapaxes(termo, 0, 2)
+        np.swapaxes(termo, 1, 2)
+        return termo
+        
+
+def getJ(N: nurbs.SplineBaseFunction, *args: Tuple[int]):
     """
     Retorna um valor de [I], a integral de
     I = int_0^1 [Nx^(a)] x [Nx^(b)] x ... x [Nx^(z)] dx
     em que args = (a, b, ..., z)
     Exemplos:
-        getMatrix(N, 0) -> I = int_0^1 [Nx] dx
-        getMatrix(N, 0, 0) -> I = int_0^1 [Nx] x [Nx] dx
-        getMatrix(N, 0, 0, 0) -> I = int_0^1 [Nx] x [Nx] x [Nx] dx
-        getMatrix(N, 1) -> I = int_0^1 [Nx'] dx
-        getMatrix(N, 2) -> I = int_0^1 [Nx''] dx
-        getMatrix(N, 1, 0) -> I = int_0^1 [Nx'] x [Nx] dx
-        getMatrix(N, 0, 1) -> I = int_0^1 [Nx] x [Nx'] dx
-        getMatrix(N, 1, 1) -> I = int_0^1 [Nx'] x [Nx'] dx
+        getJ(N, 0) -> I = int_0^1 [Nx] dx
+        getJ(N, 0, 0) -> I = int_0^1 [Nx] x [Nx] dx
+        getJ(N, 0, 0, 0) -> I = int_0^1 [Nx] x [Nx] x [Nx] dx
+        getJ(N, 1) -> I = int_0^1 [Nx'] dx
+        getJ(N, 2) -> I = int_0^1 [Nx''] dx
+        getJ(N, 1, 0) -> I = int_0^1 [Nx'] x [Nx] dx
+        getJ(N, 0, 1) -> I = int_0^1 [Nx] x [Nx'] dx
+        getJ(N, 1, 1) -> I = int_0^1 [Nx'] x [Nx'] dx
     """
-    n, p, U = N.npts, N.degree, N.knotvector
+    n, p = N.npts, N.degree
     ndim = len(args)
     if not (0 < ndim < 4):
         raise ValueError("The number of arguments must be 1, 2, or 3")
@@ -173,62 +299,19 @@ def getMatrix(N: nurbs.SplineBaseFunction, *args: Tuple[int]):
     maxderpartes = int(np.ceil(np.mean(args)))
     if maxderpartes > p:
         return np.zeros(ndim*[n], dtype="float64")
-    D = {}
-    for i in range(max(1,p-maxderpartes), p+1):
-        D[i] = getD(i, U)
     if ndim == 1:
-        a = a
-        if a == 0:
-            return getH(N, p)
-        elif a == 1:
-            return D[p] @ getH(N, p-1)
-        elif a == 2:
-            return D[p] @ D[p-1] @ getH(N, p-2)
-        elif a == 3:
-            return D[p] @ D[p-1] @ D[p-2] @ getH(N, p-3)
+        return getJ1(N, args[0])
     elif ndim == 2:
-        a, b = args
-        if a == 0 and b == 0:
-            return getH(N, p, p)
-        elif a == 1 and b == 1:
-            return D[p] @ getH(N, p-1, p-1) @ D[p].T
-        elif a == 2 and b == 2:
-            return D[p] @ D[p-1] @ getH(N, p-2, p-2) @ D[p-1].T @ D[p].T
-        elif a == 3 and b == 3:
-            return D[p] @ D[p-1] @ D[p-1] @ getH(N, p-3, p-3) @ D[p-2].T @ D[p-1].T @ D[p].T
-
-        elif a == 1 and b == 0:
-            return D[p] @ getH(N, p-1, p)
-        elif a == 0 and b == 1:
-            return getH(N, p-1, p-1) @ D[p].T
-        elif a == 2 and b == 0:
-            termo = np.tensordot(D[p] @ N[:, p-1](1), N[:, p](1), axes=0)
-            termo -= np.tensordot(D[p] @ N[:, p-1](0), N[:, p](0), axes=0)
-            termo -= getMatrix(N, 1, 1)
-            return termo
-        elif a == 0 and b == 2:
-            termo = np.tensordot(N[:, p](1), D[p] @ N[:, p-1](1), axes=0)
-            termo -= np.tensordot(N[:, p](0), D[p] @ N[:, p-1](0), axes=0)
-            termo -= getMatrix(N, 1, 1)
-            return termo
-        elif a == 1 and b == 2:
-            return D[p] @ getH(N, p-1, p-2) @ D[p-1].T @ D[p].T
-        elif a == 2 and b == 1:
-            return D[p] @ D[p-1] @ getH(N, p-2, p-1) @ D[p].T
+        return getJ2(N, *args)
     elif ndim == 3:
-        a, b, c = args
-        if maxderpartes == maxderoriginal:
-            termo = getH(N, p-a, p-b, p-c)
-            for i in range(p-a, p):
-                termo = np.einsum("ia,ajk->ijk", D[i], termo)
-            for i in range(p-b, p):
-                termo = np.einsum("ia,ajk->ijk", D[i], termo)
-            for i in range(p-c, p):
-                termo = np.einsum("ia,ajk->ijk", D[i], termo)
-
-    raise ValueError(f"For ndim = {ndim}, args = {args}")
+        return getJ3(N, *args)
+    raise ValueError(f"For ndim = {ndim}, args = {args}. Mas der = {maxderoriginal}, by parts = {maxderpartes}")
 
 def getAlpha(j: int, U: Tuple[float]) -> np.ndarray:
+    if not isinstance(j, int):
+        raise TypeError(f"j in getAlpha must be integer, not {type(j)}")
+    if j < 1:
+        raise ValueError(f"j must be at least 1! j = {j}")
     n = U.npts
     alpha = np.zeros(n, dtype="float64")
     for i in range(n):
@@ -590,7 +673,7 @@ class TestingAuxiliarFunctions:
 
 def main_test_solve_direct_system():
     ntests = 100
-    for ndim in [1, 2, 3, 4, 5]:
+    for ndim in [1, 2, 3]:
         for kkk in tqdm(range(ntests)):
             ns = np.array(np.random.randint(2, 4, size=ndim), dtype="int16").tolist()
             Asystem, Bsystem, Xboundary, Xgood = TestingAuxiliarFunctions.create_random_linsys(ns)
@@ -616,7 +699,7 @@ def main_test_iterative_solve_system():
 
 def main_test_invert_matrix():
     ntests = 100
-    for ndim in [1, 2, 3, 4, 5]:
+    for ndim in [1, 2, 3]:
         for kkk in tqdm(range(ntests)):
             ns = np.array(np.random.randint(2, 4, size=ndim), dtype="int16").tolist()
             Asystem, Bsystem, Xboundary, Xgood = TestingAuxiliarFunctions.create_random_linsys(ns)

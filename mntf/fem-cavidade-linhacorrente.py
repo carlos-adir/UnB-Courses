@@ -1,6 +1,6 @@
 import numpy as np
 from compmec import nurbs
-from helper import getAlpha, getD, getH, solve_system, invert_matrix
+from helper import getAlpha, getD, getH, getJ, solve_system, invert_matrix
 from femnavierhelper import Fit, plot_all_fields, plot_field
 from typing import Optional
 from matplotlib import pyplot as plt
@@ -16,16 +16,14 @@ def print_matrix(M: np.ndarray, name: Optional[str] = None):
 def top_speed(x: float) -> float:
     return np.sin(np.pi*x)**2
 
-Re = 100
-mu = 1/Re
 
 ###########################################
 #                  MALHA                  #
 ###########################################
 
 px, py = 3, 3
-nx, ny = 15, 15
-tmax, dtmax = 3, 0.00001
+nx, ny = 51, 51
+tmax, dtmax = 3, 0.000001
 ntsave = 101
 dtmax = min(dtmax, tmax/(ntsave-1))
 timesave = np.linspace(0, tmax, ntsave)
@@ -67,43 +65,21 @@ print("    dt = %.3e" % dt)
 ###########################################
 
 print("Montagem de matrizes")
-Dpx = getD(px, Ux)
-Dpy = getD(py, Uy)
-Dpx1 = getD(px-1, Ux)
-Dpy1 = getD(py-1, Uy)
-Dpx2 = getD(px-2, Ux)
-Dpy2 = getD(py-2, Uy)
-Hpxpx = getH(Nx, px, px)
-Hpypy = getH(Ny, py, py)
+Hpxpx = getJ(Nx, 0, 0)
+Hpypy = getJ(Ny, 0, 0)
+Hxd2x = getJ(Nx, 0, 2)
+Hxd4x = getJ(Nx, 0, 4)
+Hyd2y = getJ(Ny, 0, 2)
+Hyd4y = getJ(Ny, 0, 4)
 
-Hxd2x = -Dpx @ getH(Nx, px-1, px-1) @ Dpx.T
-Hxd2x += np.tensordot(Nx(1), Dpx @ Nx[:, px-1](1), axes=0)
-Hxd2x -= np.tensordot(Nx(1), Dpx @ Nx[:, px-1](1), axes=0)
-Hxd4x = Dpx @ Dpx1 @ getH(Nx, px-2, px-2) @ Dpx1.T @ Dpx
-if px > 2:
-    Hxd4x += np.tensordot(Nx(1), Dpx @ Dpx1 @ Dpx2 @ Nx[:, px-3](1), axes=0)
-    Hxd4x -= np.tensordot(Nx(0), Dpx @ Dpx1 @ Dpx2 @ Nx[:, px-3](0), axes=0)
-Hxd4x -= np.tensordot(Dpx @ Nx[:, px-1](1), Dpx @ Dpx1 @ Nx[:, px-2](1), axes=0)
-Hxd4x += np.tensordot(Dpx @ Nx[:, px-1](0), Dpx @ Dpx1 @ Nx[:, px-2](0), axes=0)
-
-Hyd2y = -Dpy @ getH(Ny, py-1, py-1) @ Dpy.T
-Hyd2y += np.tensordot(Ny(1), Dpy @ Ny[:, py-1](1), axes=0)
-Hyd2y -= np.tensordot(Ny(1), Dpy @ Ny[:, py-1](1), axes=0)
-Hyd4y = Dpy @ Dpy1 @ getH(Ny, py-2, py-2) @ Dpy1.T @ Dpy
-if py > 2:
-    Hyd4y += np.tensordot(Ny(1), Dpy @ Dpy1 @ Dpy2 @ Ny[:, py-3](1), axes=0)
-    Hyd4y -= np.tensordot(Ny(0), Dpy @ Dpy1 @ Dpy2 @ Ny[:, py-3](0), axes=0)
-Hyd4y -= np.tensordot(Dpy @ Ny[:, py-1](1), Dpy @ Dpy1 @ Ny[:, py-2](1), axes=0)
-Hyd4y += np.tensordot(Dpy @ Ny[:, py-1](0), Dpy @ Dpy1 @ Ny[:, py-2](0), axes=0)
-
-# Mat1X = np.einsum("ja,iak->ijk", Dpx, getH(Nx, px, px-1, px))
-# Mat2X = np.einsum("kc,ijc->ijk", Dpx, getH(Nx, px, px-1, px))
-# Mat3X = np.einsum("ia,ajk->ijk", Dpx, getH(Nx, px, px-1, px))
-# Mat4X = np.einsum("ia,ajk->ijk", Dpx, getH(Nx, px, px-1, px))
-# Mat1Y = np.einsum("ia,ajk->ijk", Dpx, getH(Nx, px, px-1, px))
-# Mat2Y = np.einsum("ia,ajk->ijk", Dpx, getH(Nx, px, px-1, px))
-# Mat3Y = np.einsum("ia,ajk->ijk", Dpx, getH(Nx, px, px-1, px))
-# Mat4Y = np.einsum("ia,ajk->ijk", Dpx, getH(Nx, px, px-1, px))
+Mat1X = getJ(Nx, 0, 1, 0)
+Mat2X = getJ(Nx, 0, 0, 1)
+Mat3X = getJ(Nx, 0, 1, 2)
+Mat4X = getJ(Nx, 0, 0, 3)
+Mat1Y = getJ(Ny, 0, 0, 3)
+Mat2Y = getJ(Ny, 0, 1, 2)
+Mat3Y = getJ(Ny, 0, 0, 1)
+Mat4Y = getJ(Ny, 0, 1, 0)
 
 ###########################################
 #          CONDICOES DE CONTORNO          #
@@ -120,7 +96,7 @@ Vbound[1:nx-1, 1:ny-1].fill(np.nan)
 
 Sbound = np.zeros((nx, ny), dtype="float64")
 Sbound[2:nx-2, 2:ny-1].fill(np.nan)
-Sbound[2:nx-2, ny-2] = Utopctrlpoints[2:nx-2] / getAlpha(py, Uy)[-1]
+Sbound[2:nx-2, ny-2] = -Utopctrlpoints[2:nx-2] / getAlpha(py, Uy)[-1]
 dSdtbound = np.zeros((nx, ny), dtype="float64")
 dSdtbound[2:nx-2, 2:ny-2].fill(np.nan)
 
@@ -142,28 +118,33 @@ Sinit = lambda x, y: np.sin(np.pi*x)**2 * y**2 *(1-y)
 S = np.zeros((ntsave, nx, ny), dtype="float64")
 S[0] = Fit.spline_surface(Nx, Ny, Sinit, Sbound)
 
-
-
 ###########################################
 #                ITERACOES                #
 ###########################################
 
 print("Iteracoes")
 dSdt = np.zeros((nx, ny), dtype="float64")
-for k in tqdm(range(1, ntsave)):
-    timea, timeb = timesave[k-1], timesave[k]
-    nsteps = int(np.ceil((timeb-timea)/dtmax))
-    dt = (timeb-timea)/nsteps
-    S[k] = S[k-1]
-    for kk in range(nsteps):
-        Bsystem[:, :] = mu*np.einsum("ia,jb,ab->ij", Hxd4x, Hpypy, S[k])
-        Bsystem[:, :] += 2*mu*np.einsum("ia,jb,ab->ij", Hxd2x, Hyd2y, S[k])
-        Bsystem[:, :] += mu*np.einsum("ia,jb,ab->ij", Hpxpx, Hyd4y, S[k])
-        # dSdt[:, :] = solve_system(Asystem, Bsystem, dSdtbound, mask=masknan)[0]
-        dSdt.fill(0)
-        dSdt += np.einsum("iajb,ab->ij", iSS, dSdtbound)
-        dSdt += np.einsum("iajb,ab->ij", iSB, Bsystem)
-        S[k] += dt*dSdt
+for Re in [10, 100, 1000, 10000]:
+    mu = 1/Re
+    for k in tqdm(range(1, ntsave)):
+        timea, timeb = timesave[k-1], timesave[k]
+        nsteps = int(np.ceil((timeb-timea)/dtmax))
+        dt = (timeb-timea)/nsteps
+        S[k] = S[k-1]
+        for kk in range(nsteps):
+            Bsystem[:, :] = mu*np.einsum("ia,jb,ab->ij", Hxd4x, Hpypy, S[k])
+            Bsystem[:, :] += 2*mu*np.einsum("ia,jb,ab->ij", Hxd2x, Hyd2y, S[k])
+            Bsystem[:, :] += mu*np.einsum("ia,jb,ab->ij", Hpxpx, Hyd4y, S[k])
+            
+            Bsystem[:, :] += np.einsum("iac,jbd,ab,cd->ij", Mat1X, Mat1Y, S[k], S[k])
+            Bsystem[:, :] -= np.einsum("iac,jbd,ab,cd->ij", Mat2X, Mat2Y, S[k], S[k])
+            Bsystem[:, :] += np.einsum("iac,jbd,ab,cd->ij", Mat3X, Mat3Y, S[k], S[k])
+            Bsystem[:, :] -= np.einsum("iac,jbd,ab,cd->ij", Mat4X, Mat4Y, S[k], S[k])
+            # dSdt[:, :] = solve_system(Asystem, Bsystem, dSdtbound, mask=masknan)[0]
+            dSdt[:, :] = np.einsum("iajb,ab->ij", iSS, dSdtbound)
+            dSdt[:, :] += np.einsum("iajb,ab->ij", iSB, Bsystem)
+            S[k] += dt*dSdt
+    np.save("Rey%d_S.npy" % Re, S)
 
 print("Plotando os resultados")
 plot_all_fields(Nx, Ny, S=S[k])
@@ -207,6 +188,5 @@ for i, zplot in enumerate([splot, uplot, vplot, wplot]):
     axes[i, 3].plot(yplot, zplot[:, 0])
     axes[i, 4].plot(yplot, zplot[:, yspot])
     axes[i, 5].plot(yplot, zplot[:, -1])
-
 
 plt.show()

@@ -46,14 +46,17 @@ class Fit:
     @staticmethod
     def spline_surface(Nx: nurbs.SplineBaseFunction, Ny: nurbs.SplineBaseFunction, f: Callable[[float, float], float], BCvals: np.ndarray = None) -> np.array:
         nx, ny = Nx.npts, Ny.npts
+        px, py = Nx.degree, Ny.degree
         xsample = []
         ysample = []
         xknots = Nx.knotvector.knots
         yknots = Ny.knotvector.knots
+        ndivx = int(np.ceil(1/(1-px/nx)))
+        ndivy = int(np.ceil(1/(1-py/ny)))
         for ta, tb in zip(xknots[:-1], xknots[1:]):
-            xsample.extend(np.linspace(ta, tb, 5, endpoint=False))
+            xsample.extend(np.linspace(ta, tb, ndivx, endpoint=False))
         for ta, tb in zip(yknots[:-1], yknots[1:]):
-            ysample.extend(np.linspace(ta, tb, 5, endpoint=False))
+            ysample.extend(np.linspace(ta, tb, ndivy, endpoint=False))
         xsample.append(1)
         xsample = np.array(xsample)
         ysample.append(1)
