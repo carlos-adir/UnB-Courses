@@ -1,8 +1,7 @@
 import numpy as np
 from compmec import nurbs
 from typing import Callable, Tuple
-from helper import getD, getH, solve_system, plot_field
-from matplotlib import pyplot as plt
+from helper import getD, getH, solve_system
 
 class Fit:
 
@@ -186,55 +185,6 @@ def compute_V_from_current_line(Nx: nurbs.SplineBaseFunction, Ny: nurbs.SplineBa
     for j in range(ny):
         V[:, j] = Mat @ S[:, j]
     return V
-
-
-
-def alpha(U: Tuple[float], i: int, j: int):
-    if U[i+j] == U[i]:
-        return 0
-    return j/(U[i+j]-U[i])
-
-
-def plot_all_fields(Nx: nurbs.SplineBaseFunction, Ny: nurbs.SplineBaseFunction, S):
-    xplot = np.linspace(0, 1, 1025)
-    yplot = np.linspace(0, 1, 1025)
-    px, nx = Nx.degree, Nx.npts
-    py, ny = Ny.degree, Ny.npts
-    Dpx = getD(px, Nx.knotvector)
-    Dpx1 = getD(px-1, Nx.knotvector)
-    Dpy = getD(py, Ny.knotvector)
-    Dpy1 = getD(py-1, Ny.knotvector)
-    Lx = Nx[:, px](xplot)
-    dLx = Dpx @ Nx[:, px-1](xplot)
-    ddLx = Dpx @ Dpx1 @ Nx[:, px-2](xplot)
-    Ly = Ny[:, py](yplot)
-    dLy = Dpy @ Ny[:, py-1](yplot)
-    ddLy = Dpy @ Dpy1 @ Ny[:, py-2](yplot)
-
-    fig, axes = plt.subplots(1, 5, figsize=(16, 4))
-
-    splot = Lx.T @ S @ Ly
-    plot_field(xplot, yplot, splot, contour=True, ax=axes[0])
-    uplot = Lx.T @ S @ dLy  # U
-    plot_field(xplot, yplot, uplot, contour=True, ax=axes[1])
-    vplot = dLx.T @ S @ dLy  # V
-    plot_field(xplot, yplot, vplot, contour=True, ax=axes[2])
-    wplot = -(ddLx.T @ S @ Ly + Lx.T @ S @ ddLy)  # W
-    plot_field(xplot, yplot, wplot, contour=True, ax=axes[3])
-    # zplot = Lx.T @ P @ Ly
-    # plot_field(xplot, yplot, zplot, contour=True, ax=axes[4])
-    axes[0].set_title(r"Linha de corrente $S$")
-    axes[1].set_title(r"Horizontal speed $u$")
-    axes[2].set_title(r"Vertical speed $v$")
-    axes[3].set_title(r"Vorticidade $W$")
-    axes[4].set_title(r"Pressure $p$")
-    for i in range(5):
-        # axes[i].set_xlabel(r"Dimensao $x$")
-        # axes[i].set_ylabel(r"Dimensao $y$")
-        axes[i].set_xlim(0, 1)
-        axes[i].set_ylim(0, 1)
-        # [axes[i].axvline(x=xi, ls="dotted", color="k") for xi in list(set(Nx.knotvector))[1:-1]]
-        # [axes[i].axhline(y=yj, ls="dotted", color="k") for yj in list(set(Ny.knotvector))[1:-1]]
 
 
 if __name__ == "__main__":

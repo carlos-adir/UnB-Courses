@@ -45,7 +45,7 @@ dSdytopctrlpoints = -Utopctrlpoints / getAlpha(py, Uy)[-1]
 S[:, ny-2] = dSdytopctrlpoints  # dSdy(t, 1, y) = 0, right wall
 
 print("Montando o sistema")
-f = lambda x, y: 1
+f = lambda x, y: 0
 A = mountA(Nx, Ny)
 B = Fit.spline_surface(Nx, Ny, f)
 print("Resolvendo!")
