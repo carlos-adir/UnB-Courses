@@ -5,6 +5,7 @@ from femnavierhelper import Fit, plot_all_fields, plot_field
 from typing import Optional
 from matplotlib import pyplot as plt
 from tqdm import tqdm
+from save_to_paraview import SaveParaview
 np.set_printoptions(precision=3, suppress=True)
 
 def print_matrix(M: np.ndarray, name: Optional[str] = None):
@@ -22,9 +23,9 @@ def top_speed(x: float) -> float:
 ###########################################
 
 px, py = 3, 3
-nx, ny = 51, 51
-tmax, dtmax = 3, 0.000001
-ntsave = 101
+nx, ny = 7, 7
+tmax, dtmax = 3, 0.001
+ntsave = 51
 dtmax = min(dtmax, tmax/(ntsave-1))
 timesave = np.linspace(0, tmax, ntsave)
 nt = int(np.ceil(tmax/dtmax))
@@ -122,35 +123,46 @@ S[0] = Fit.spline_surface(Nx, Ny, Sinit, Sbound)
 #                ITERACOES                #
 ###########################################
 
+
 print("Iteracoes")
 dSdt = np.zeros((nx, ny), dtype="float64")
-for Re in [10, 100, 1000, 10000]:
+for Re in [100]:
     mu = 1/Re
-    for k in tqdm(range(1, ntsave)):
-        timea, timeb = timesave[k-1], timesave[k]
-        nsteps = int(np.ceil((timeb-timea)/dtmax))
-        dt = (timeb-timea)/nsteps
-        S[k] = S[k-1]
-        for kk in range(nsteps):
-            Bsystem[:, :] = mu*np.einsum("ia,jb,ab->ij", Hxd4x, Hpypy, S[k])
-            Bsystem[:, :] += 2*mu*np.einsum("ia,jb,ab->ij", Hxd2x, Hyd2y, S[k])
-            Bsystem[:, :] += mu*np.einsum("ia,jb,ab->ij", Hpxpx, Hyd4y, S[k])
-            
-            Bsystem[:, :] += np.einsum("iac,jbd,ab,cd->ij", Mat1X, Mat1Y, S[k], S[k])
-            Bsystem[:, :] -= np.einsum("iac,jbd,ab,cd->ij", Mat2X, Mat2Y, S[k], S[k])
-            Bsystem[:, :] += np.einsum("iac,jbd,ab,cd->ij", Mat3X, Mat3Y, S[k], S[k])
-            Bsystem[:, :] -= np.einsum("iac,jbd,ab,cd->ij", Mat4X, Mat4Y, S[k], S[k])
-            # dSdt[:, :] = solve_system(Asystem, Bsystem, dSdtbound, mask=masknan)[0]
-            dSdt[:, :] = np.einsum("iajb,ab->ij", iSS, dSdtbound)
-            dSdt[:, :] += np.einsum("iajb,ab->ij", iSB, Bsystem)
-            S[k] += dt*dSdt
-    np.save("Rey%d_S.npy" % Re, S)
+    try:
+        Sloaded = np.load("Rey%d_S.npy" % Re)
+        
+        print("Sload.shape = ", Sloaded.shape)
+        if Sloaded.shape != (ntsave, nx, ny):
+            raise ValueError
+        S[:] = Sloaded[:] 
+    except Exception as e:
+        for k in tqdm(range(1, ntsave)):
+            timea, timeb = timesave[k-1], timesave[k]
+            nsteps = int(np.ceil((timeb-timea)/dtmax))
+            dt = (timeb-timea)/nsteps
+            S[k] = S[k-1]
+            for kk in tqdm(range(nsteps)):
+                Bsystem[:, :] = mu*np.einsum("ia,jb,ab->ij", Hxd4x, Hpypy, S[k])
+                Bsystem[:, :] += 2*mu*np.einsum("ia,jb,ab->ij", Hxd2x, Hyd2y, S[k])
+                Bsystem[:, :] += mu*np.einsum("ia,jb,ab->ij", Hpxpx, Hyd4y, S[k])
+                
+                Bsystem[:, :] += np.einsum("iac,jbd,ab,cd->ij", Mat1X, Mat1Y, S[k], S[k])
+                Bsystem[:, :] -= np.einsum("iac,jbd,ab,cd->ij", Mat2X, Mat2Y, S[k], S[k])
+                Bsystem[:, :] += np.einsum("iac,jbd,ab,cd->ij", Mat3X, Mat3Y, S[k], S[k])
+                Bsystem[:, :] -= np.einsum("iac,jbd,ab,cd->ij", Mat4X, Mat4Y, S[k], S[k])
+                # dSdt[:, :] = solve_system(Asystem, Bsystem, dSdtbound, mask=masknan)[0]
+                dSdt[:, :] = np.einsum("iajb,ab->ij", iSS, dSdtbound)
+                dSdt[:, :] += np.einsum("iajb,ab->ij", iSB, Bsystem)
+                S[k] += dt*dSdt
+        np.save("Rey%d_S.npy" % Re, S)
 
+
+k = ntsave-1
+# k = 0
 print("Plotando os resultados")
-plot_all_fields(Nx, Ny, S=S[k])
 
-xplot = np.linspace(0, 1, 1028*2+1)
-yplot = np.linspace(0, 1, 1028*2+1)
+xplot = np.linspace(0, 1, 129)
+yplot = np.linspace(0, 1, 129)
 xspot = int(np.where(min(abs(xplot-0.5)) == abs(xplot-0.5))[0])
 yspot = int(np.where(min(abs(yplot-0.5)) == abs(yplot-0.5))[0])
 px, nx = Nx.degree, Nx.npts
@@ -166,11 +178,26 @@ Ly = Ny[:, py](yplot)
 dLy = Dpy @ Ny[:, py-1](yplot)
 ddLy = Dpy @ Dpy1 @ Ny[:, py-2](yplot)
 
-fig, axes = plt.subplots(4, 6, figsize=(16, 20))
+saver = SaveParaview()
+saver.xmesh = xplot
+saver.ymesh = yplot
+saver.tmesh = timesave
+saver.filename = "Rey%d.xdmf" % Re
+saver.fields["S"] = np.einsum("ai,bj,kab->kij", Lx, Ly, S)
+saver.fields["U"] = np.einsum("ai,bj,kab->kij", Lx, dLy, S)
+saver.fields["V"] = np.einsum("ai,bj,kab->kij", -dLx, Ly, S)
+saver.fields["W"] = np.einsum("ai,bj,kab->kij", -ddLx, Ly, S) + np.einsum("ai,bj,kab->kij", -Lx, ddLy, S)
+saver.save()
+
+
 splot = Lx.T @ S[k] @ Ly
 uplot = Lx.T @ S[k] @ dLy  # U
 vplot = -dLx.T @ S[k] @ Ly  # V
 wplot = -(ddLx.T @ S[k] @ Ly + Lx.T @ S[k] @ ddLy)  # W
+
+plot_all_fields(Nx, Ny, S=S[k])
+
+fig, axes = plt.subplots(4, 6, figsize=(16, 20))
 axes[0, 0].set_title(r"Left wall")
 axes[0, 1].set_title(r"$x = 0.5$")
 axes[0, 2].set_title(r"Right wall")

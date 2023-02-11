@@ -2,7 +2,16 @@ import numpy as np
 from matplotlib import pyplot as plt
 from helper import getJ, getD, solve_system, plot_field, getAlpha
 from femnavierhelper import Fit
+from save_to_paraview import SaveParaview
 from compmec import nurbs
+
+def file_exists(filename: str) -> bool:
+    try:
+        with open(filename, "r") as file:
+            pass
+        return True
+    except Exception as e:
+        return False
 
 def mountA(Nx, Ny, Nt) -> np.ndarray:
     Hxd0x = getJ(Nx, 0, 0)
@@ -15,9 +24,9 @@ def mountA(Nx, Ny, Nt) -> np.ndarray:
     Htd1t = getJ(Nt, 0, 1)
     A = np.einsum("ia,jb,kc->kciajb", Hxd2x, Hyd0y, Htd1t)
     A += np.einsum("ia,jb,kc->kciajb", Hxd0x, Hyd2y, Htd1t)
-    A -= np.einsum("ia,jb,kc->kciajb", Hxd4x, Hyd0y, Htd0t)
-    A -= np.einsum("ia,jb,kc->kciajb", Hxd2x, Hyd2y, Htd0t)
-    A -= np.einsum("ia,jb,kc->kciajb", Hxd0x, Hyd4y, Htd0t)
+    A -= mu*np.einsum("ia,jb,kc->kciajb", Hxd4x, Hyd0y, Htd0t)
+    A -= mu*np.einsum("ia,jb,kc->kciajb", Hxd2x, Hyd2y, Htd0t)
+    A -= mu*np.einsum("ia,jb,kc->kciajb", Hxd0x, Hyd4y, Htd0t)
     return A
 
 def mountB(Nx, Ny, Nt, xsample, ysample, tsample, f) -> np.ndarray:
@@ -63,6 +72,9 @@ xsample = np.linspace(0, 1, 4*nx)
 ysample = np.linspace(0, 1, 4*ny)
 tsample = np.linspace(0, 1, 4*nt)
 
+Re = 1
+mu = 1/Re
+
 S = np.empty((nt, nx, ny), dtype="float64")
 S.fill(np.nan)
 
@@ -82,32 +94,33 @@ for l in range(nt):
     S[l, :, ny-2] = dSdytopctrlpoints  # dSdy(t, 1, y) = 0, right wall
 S[0, :, :] = Fit.spline_surface(Nx, Ny, Sinit, S[0])  # Initial conditions at T(0, x, y) = 0
 
-print("Montando o sistema")
-f = lambda x, y, t: 0
-A = mountA(Nx, Ny, Nt)
-B = mountB(Nx, Ny, Nt, xsample, ysample, tsample, f)
-print("Resolvendo!")
-S[np.isnan(S)] = 0
-# S, _ = solve_system(A, B, S)
+filename = "Rey%d_S-NOnonlinear.npy" % Re
+if file_exists(filename):
+    print("Arquivo existe! Vamos ler")
+    Sopened = np.load(filename)
+    if Sopened.shape == S.shape:
+        S[:] = Sopened[:]
+    else:
+        print("    Sopened.shape = ", Sopened.shape)
+        print("    S.shape = ", S.shape)
+if np.any(np.isnan(S)):
+    print("Montando o sistema")
+    f = lambda x, y, t: 0
+    A = mountA(Nx, Ny, Nt)
+    B = mountB(Nx, Ny, Nt, xsample, ysample, tsample, f)
+    print("Resolvendo!")
+    masknan = np.isnan(S)
+    S[masknan] = 0
+    S, _ = solve_system(A, B, S, mask=masknan)
+    np.save(filename, S)
+    print("Resolvido!")
 
 print("Pos trait!")
-
-xplot = np.linspace(0, 1, 65)
-yplot = np.linspace(0, 1, 129)
-tplot = np.linspace(0, 1, 2)
-Lx, Ly, Lt = Nx(xplot), Ny(yplot), Nt(tplot)
-
-femvalues = np.tensordot(Ly, S, axes=(0, 2))
-femvalues = np.tensordot(Lx, femvalues, axes=(0, 2))
-femvalues = np.tensordot(Lt, femvalues, axes=(0, 2))
-exavalues = np.tensordot(np.sin(np.pi*xplot), np.sinh(np.pi*yplot)/np.sinh(np.pi), axes=0)
-
-k = nt-1
-k = 0
-
-
-xplot = np.linspace(0, 1, 1025)
-yplot = np.linspace(0, 1, 1025)
+ntsave = 33
+xplot = np.linspace(0, 1, 33)
+yplot = np.linspace(0, 1, 33)
+timesave = np.linspace(0, 1, ntsave)
+Lx, Ly, Lt = Nx(xplot), Ny(yplot), Nt(timesave)
 px, nx = Nx.degree, Nx.npts
 py, ny = Ny.degree, Ny.npts
 Dpx = getD(px, Nx.knotvector)
@@ -120,6 +133,46 @@ ddLx = Dpx @ Dpx1 @ Nx[:, px-2](xplot)
 Ly = Ny[:, py](yplot)
 dLy = Dpy @ Ny[:, py-1](yplot)
 ddLy = Dpy @ Dpy1 @ Ny[:, py-2](yplot)
+
+print("Saving to Paraview")
+saver = SaveParaview()
+saver.xmesh = xplot
+saver.ymesh = yplot
+saver.tmesh = timesave
+saver.filename = "Rey%d-NOnonlinear.xdmf" % Re
+print("   S...")
+saver.fields["S"] = np.einsum("ai,bj,ck,cab->kij", Lx, Ly, Lt, S)
+print("   U...")
+saver.fields["U"] = np.einsum("ai,bj,ck,cab->kij", Lx, dLy, Lt, S)
+print("   V...")
+saver.fields["V"] = np.einsum("ai,bj,ck,cab->kij", -dLx, Ly, Lt, S)
+print("   W...")
+saver.fields["W"] = np.einsum("ai,bj,ck,cab->kij", -ddLx, Ly, Lt, S) + np.einsum("ai,bj,ck,cab->kij", -Lx, ddLy, Lt, S)
+print("   saving...")
+saver.save()
+
+k = ntsave-1
+# k = 0
+print("Plotando os resultados")
+
+xplot = np.linspace(0, 1, 129)
+yplot = np.linspace(0, 1, 129)
+xspot = int(np.where(min(abs(xplot-0.5)) == abs(xplot-0.5))[0])
+yspot = int(np.where(min(abs(yplot-0.5)) == abs(yplot-0.5))[0])
+px, nx = Nx.degree, Nx.npts
+py, ny = Ny.degree, Ny.npts
+Dpx = getD(px, Nx.knotvector)
+Dpx1 = getD(px-1, Nx.knotvector)
+Dpy = getD(py, Ny.knotvector)
+Dpy1 = getD(py-1, Ny.knotvector)
+Lx = Nx[:, px](xplot)
+dLx = Dpx @ Nx[:, px-1](xplot)
+ddLx = Dpx @ Dpx1 @ Nx[:, px-2](xplot)
+Ly = Ny[:, py](yplot)
+dLy = Dpy @ Ny[:, py-1](yplot)
+ddLy = Dpy @ Dpy1 @ Ny[:, py-2](yplot)
+
+
 
 fig, axes = plt.subplots(1, 4, figsize=(16, 4))
 
