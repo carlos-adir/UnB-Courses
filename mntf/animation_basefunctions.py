@@ -4,7 +4,7 @@ from matplotlib import animation
 from compmec import nurbs
 from helper import getD
 
-ny, py = 44, 1
+ny, py = 101, 2
 Uy = nurbs.GeneratorKnotVector.uniform(py, ny)
 Ny = nurbs.SplineBaseFunction(Uy)
 nframes = 1000
@@ -27,7 +27,7 @@ if False:
     nomes = [r"$\cos \pi x$", r"$\sin \pi x$", r"$\exp x$", r"$1$", r"$x$", r"$x^2$"]
     nx = len(basefunctions)
 else:
-    nx, px = 5, 2
+    nx, px = 7, 2
     Ux = nurbs.GeneratorKnotVector.uniform(px, nx)
     Nx = nurbs.SplineBaseFunction(Ux)
     basefunctions = [Nx[i] for i in range(nx)]
@@ -50,9 +50,9 @@ for j in range(1, py):  # Continuidade das derivadas
     R = Dpy @ (Ny[:,py-j](1) - Ny[:,py-j](0))
     ctrlpoints[:, -j-1] = -(ctrlpoints[:, :-j-1] @ R[:-j-1] + ctrlpoints[:,-j:] @ R[-j:])/R[-j-1]
 
-index = 2
-ctrlpoints[index+1:, :] = 0
-ctrlpoints[:index, :] = 0
+# index = 2
+# ctrlpoints[index+1:, :] = 0
+# ctrlpoints[:index, :] = 0
 
 weights = Lx.T @ ctrlpoints
 allpoints =  Lx.T @ ctrlpoints @ Ly
