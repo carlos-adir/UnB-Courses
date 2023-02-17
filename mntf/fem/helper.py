@@ -8,7 +8,19 @@ np.set_printoptions(4)
 from helpernurbs import *
 from helperlinalg import *
 
+def file_exists(filename: str) -> bool:
+    try:
+        file = open(filename, "r")
+        file.close()
+        return True
+    except FileNotFoundError:
+        return False
 
+def print_matrix(M: np.ndarray, name: Optional[str] = None):
+    assert M.ndim == 2
+    if name:
+        print(name + " = ")
+    print(M.T[::-1])
 
 def RK4(f: Callable[[float, float], float], ti: float, h: float, wi: float):
     """Runge Kutta of order 3. Has error O(h^4)"""

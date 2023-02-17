@@ -2,11 +2,13 @@ import numpy as np
 from matplotlib import pyplot as plt
 from compmec import nurbs
 from tqdm import tqdm
-from helper import getD, getH, plot_field, solve_system
+from ploter import *
+from helpernurbs import getD, getH, getT, Fit
+from helperlinalg import solve_system
 from typing import Tuple, Callable
 from femnavierhelper import *
-np.set_printoptions(precision=2, suppress=True)
 import sympy as sp
+np.set_printoptions(precision=2, suppress=True)
 
 
 # Analitico
@@ -69,7 +71,7 @@ Nx = nurbs.SplineBaseFunction(Ux)
 Ny = nurbs.SplineBaseFunction(Uy)
 
 
-Uupperctrlpts = fit_spline_curve(Nx, lambda x: np.sin(np.pi*x)**2)
+Uupperctrlpts = Fit.spline_curve(Nx, lambda x: np.sin(np.pi*x)**2)
 
 xsample = np.linspace(0, 1, 3*nx)
 ysample = np.linspace(0, 1, 3*ny)
@@ -78,13 +80,13 @@ Ly = Ny(ysample)
 
 W = np.zeros((nt, nx, ny), dtype="float64")  # Rotacional
 S = np.zeros((nt, nx, ny), dtype="float64")  # Linhas de corrente
-W[0] = fit_spline_surface(Nx, Ny, w_initial)
-S[0] = fit_spline_surface(Nx, Ny, s_initial)
+W[0] = Fit.spline_surface(Nx, Ny, w_initial)
+S[0] = Fit.spline_surface(Nx, Ny, s_initial)
 
-Hpxpx = getH(Nx, px, px)
-Hpypy = getH(Ny, py, py)
-Hpx1px1 = getH(Nx, px-1, px-1)
-Hpy1py1 = getH(Ny, py-1, py-1)
+Hpxpx = getT(Nx, px, px)
+Hpypy = getT(Ny, py, py)
+Hpx1px1 = getT(Nx, px-1, px-1)
+Hpy1py1 = getT(Ny, py-1, py-1)
 Dpx = getD(px, Ux)
 Dpy = getD(py, Uy)
 Dpx1 = getD(px-1, Ux)
@@ -98,10 +100,10 @@ Yb -= np.tensordot(Ny[:, py](0), Ny[:, py-1](0), axes=0)
 MatXLap = Xb @ Dpx.T - Dpx @ Hpx1px1 @ Dpx.T
 MatYLap = Yb @ Dpy.T - Dpy @ Hpy1py1 @ Dpy.T
 
-Mat1PosX = np.einsum("izk,zj->ijk", getH(Nx, px,px-1,px), Dpx.T)
-Mat1PosY = np.einsum("ijz,zk->ijk", getH(Ny, py,py,py-1), Dpy.T)
-Mat2PosX = np.einsum("ijz,zk->ijk", getH(Nx, px,px,px-1), Dpx.T)
-Mat2PosY = np.einsum("izk,zj->ijk", getH(Ny, py,py-1,py), Dpy.T)
+Mat1PosX = np.einsum("izk,zj->ijk", getT(Nx, px,px-1,px), Dpx.T)
+Mat1PosY = np.einsum("ijz,zk->ijk", getT(Ny, py,py,py-1), Dpy.T)
+Mat2PosX = np.einsum("ijz,zk->ijk", getT(Nx, px,px,px-1), Dpx.T)
+Mat2PosY = np.einsum("izk,zj->ijk", getT(Ny, py,py-1,py), Dpy.T)
 
 Bmat = np.zeros((2, nx, ny), dtype="float64")
 Amat = np.zeros((2, 2, nx, nx, ny, ny))
@@ -169,10 +171,6 @@ print(Xbound[0].T[::-1])
 print(Xbound[1].T[::-1])
 for k in tqdm(range(1, nt)):
     tk = k*dt
-    # break
-
-    # dt = 0
-
     Bmat[1, :, :] = mu*MatXLap @ W[k-1, :, :] @ Hpypy.T
     Bmat[1, :, :] += mu*Hpxpx @ W[k-1, :, :] @ MatYLap.T
     Bmat[1, :, :] += np.einsum("iac,jbd,ab,cd->ij", Mat1PosX, Mat1PosY, S[k-1], W[k-1])
@@ -180,13 +178,10 @@ for k in tqdm(range(1, nt)):
     Bmat[1, :, :] *= dt
     Bmat[1, :, :] += np.einsum("ia,jb,ab->ij", Hpxpx, Hpypy, W[k-1])
 
-    
-
     solution, _ = solve_system(Amat, Bmat, Xbound)
     S[k, :, :] = solution[0, :, :]
     W[k, :, :] = solution[1, :, :]
 
-# k = 0
 U = compute_U_from_current_line(Nx, Ny, S[k])
 V = compute_V_from_current_line(Nx, Ny, S[k])
 P = compute_pressure_from_current_line(Nx, Ny, S[k])

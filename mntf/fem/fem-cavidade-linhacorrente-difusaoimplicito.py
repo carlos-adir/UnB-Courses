@@ -1,28 +1,17 @@
 import numpy as np
 from compmec import nurbs
-from helpernurbs import getAlpha, getD, getH, Fit
+from helpernurbs import getAlpha, getD, getH, getChebyshevnodes, Fit
 # from femnavierhelper import 
 import ploter
 from typing import Optional
 from matplotlib import pyplot as plt
 from tqdm import tqdm
+from helper import file_exists, print_matrix
 from helperlinalg import solve_system, invert_matrix, eigenvalues
 from save_to_paraview import SaveParaview
 np.set_printoptions(precision=3, suppress=True)
 
-def file_exists(filename: str) -> bool:
-    try:
-        file = open(filename, "r")
-        file.close()
-        return True
-    except FileNotFoundError:
-        return False
 
-def print_matrix(M: np.ndarray, name: Optional[str] = None):
-    assert M.ndim == 2
-    if name:
-        print(name + " = ")
-    print(M.T[::-1])
 
 def top_speed(x: float) -> float:
     return np.sin(np.pi*x)**2
@@ -35,7 +24,7 @@ def top_speed(x: float) -> float:
 px, py = 3, 3
 nx, ny = 11, 11
 nt = 101  # to save time
-tmax, dtmax = 0.2, 0.001 
+tmax, dtmax = 1, 0.001
 # If dtmax is None, choose based on eigenvalues
 
 Ux = nurbs.GeneratorKnotVector.uniform(px, nx)
@@ -46,29 +35,19 @@ Uy = nurbs.GeneratorKnotVector.uniform(py, ny)
 Ut = np.linspace(0, tmax, nt)
 Nx = nurbs.SplineBaseFunction(Ux)
 Ny = nurbs.SplineBaseFunction(Uy)
-# for knot in Ux.knots[1:-1]:
-#     mult = int(Ux.mult_onevalue(knot))
-#     if mult == px:
-#         continue
-#     Nx.knot_insert(knot, times=px-mult-1)
-# for knot in Uy.knots[1:-1]:
-#     mult = int(Uy.mult_onevalue(knot))
-#     if mult == py:
-#         continue
-#     Ny.knot_insert(knot, times=py-mult-1)
 # Nx.knot_insert(0.01)
 # Nx.knot_insert(0.99)
 # Ny.knot_insert(0.01)
 # Ny.knot_insert(0.99)
 # Ny.knot_insert(0.995)
 # Ny.knot_insert(0.999)
-
 Ux = Nx.knotvector
 Uy = Ny.knotvector
 Nx = nurbs.SplineBaseFunction(Ux)
 Ny = nurbs.SplineBaseFunction(Uy)
 nx, ny = Nx.npts, Ny.npts
 px, py = Nx.degree, Ny.degree
+
 print("Mesh on X: ")
 print(f"         px = {px}")
 print(f"         nx = {nx}")
@@ -140,7 +119,11 @@ dSdtbound = np.zeros((nx, ny), dtype="float64")
 
 Asystem = np.tensordot(Hx02, Hy00, axes=0)
 Asystem += np.tensordot(Hx00, Hy02, axes=0)
-Bsystem = np.zeros((nx, ny), dtype="float64")
+Dsystem = np.tensordot(Hx04, Hy00, axes=0)
+Dsystem += 2*np.tensordot(Hx02, Hy02, axes=0)
+Dsystem += np.tensordot(Hx00, Hy04, axes=0)
+newAsystem = np.zeros(Asystem.shape)
+adveccao = np.zeros((nx, ny), dtype="float64")
 
 eigens = eigenvalues(Asystem, masknan)
 print("    np.max(np.abs(eigns)) =", np.max(np.abs(eigens)))
@@ -178,47 +161,27 @@ print("    np.any(np.isnan(S[0])) =", np.any(np.isnan(S[0])))
 #                ITERACOES                #
 ###########################################
 
-def F(Sk: np.ndarray, t: float):
-    global Bsystem, iSS, iSB, dSdtbound
-    Bsystem[:, :] = mu*np.einsum("ia,jb,ab->ij", Hx04, Hy00, Sk)
-    Bsystem[:, :] += 2*mu*np.einsum("ia,jb,ab->ij", Hx02, Hy02, Sk)
-    Bsystem[:, :] += mu*np.einsum("ia,jb,ab->ij", Hx00, Hy04, Sk)
-    
-    Bsystem[:, :] += np.einsum("iac,jbd,ab,cd->ij", Hx010, Hy003, Sk, Sk)
-    Bsystem[:, :] += np.einsum("iac,jbd,ab,cd->ij", Hx012, Hy001, Sk, Sk)
-    Bsystem[:, :] -= np.einsum("iac,jbd,ab,cd->ij", Hx001, Hy012, Sk, Sk)
-    Bsystem[:, :] -= np.einsum("iac,jbd,ab,cd->ij", Hx003, Hy010, Sk, Sk)
-    if np.any(np.isnan(Bsystem)):
-        raise ValueError("Inside F, Bsystem has np.nan inside")
-    dSdt[:, :] = np.einsum("iajb,ab->ij", iSS, dSdtbound)
-    dSdt[:, :] += np.einsum("iajb,ab->ij", iSB, Bsystem)
-    if np.any(np.isnan(dSdt)):
-        raise ValueError("Inside F, there's still np.nan inside dSdt")
-    return dSdt
+
 
 
 print("Iteracoes")
 Ux = np.array(Ux)
 Uy = np.array(Uy)
 Ut = np.array(Ut)
-dSdt = np.zeros((nx, ny), dtype="float64")
-dS1dt = np.zeros((nx, ny), dtype="float64")
-dS2dt = np.zeros((nx, ny), dtype="float64")
-dS3dt = np.zeros((nx, ny), dtype="float64")
-dS4dt = np.zeros((nx, ny), dtype="float64")
-recompute = True
+Santes = np.zeros((nx, ny), dtype="float64")
+Satual = np.zeros((nx, ny), dtype="float64")
+Snext = np.zeros((nx, ny), dtype="float64")
+temp = np.zeros((nx, ny), dtype="float64")
 for Re in [1000]:
     print("    Para Reynolds = ", Re)
     # S[1:] = np.nan
     suffix = "Re%.1e-px%dpy%dnx%dny%dnt%dtmax%.2fdt%.2e" % (Re, px, py, nx, ny, nt, tmax, dtmax)
-    begin = "cavidade-linhacorrente-rungekutta"
+    begin = "cavidade-linhacorrente-difusaoimplicito"
     numpyfilename = "results/"+ begin + "-" + suffix + ".npz"
     paraviewfilename = "results/" + begin + "-" + suffix + ".xdmf"
     mu = 1/Re
     # mu = 0
-    if recompute:
-        pass
-    elif file_exists(numpyfilename):
+    if file_exists(numpyfilename):
         print("Arquivo existe! Vamos ler")
         isequal = True  # Flag
         loadedarrays = np.load(numpyfilename)
@@ -257,15 +220,19 @@ for Re in [1000]:
                 raise ValueError("After calculations, there's still np.nan inside S")
             S[k] = S[k-1]
             tmesh = np.linspace(timea, timeb, nsteps+1)
+            newAsystem[:, :, :, :] = Asystem - 2*dt*mu*Dsystem[:, :, :]
             for kk in tqdm(range(nsteps), position=1, desc="j", leave=False, ncols=80):
-                dS1dt[:, :] = dt*F(S[k], tmesh[kk])
-                dS2dt[:, :] = dt*F(S[k]+0.5*dS1dt, tmesh[kk]+0.5*dt)
-                dS3dt[:, :] = dt*F(S[k]+0.5*dS2dt, tmesh[kk]+0.5*dt)
-                dS4dt[:, :] = dt*F(S[k]+dS3dt, tmesh[kk]+dt)
-                S[k] += (dS1dt+2*dS2dt+2*dS3dt+dS4dt)/6
-                S[k, ~masknan] = Sbound[~masknan]
-                if np.any(np.isnan(S[k])):
+                adveccao[:, :] = np.einsum("iac,jbd,ab,cd->ij", Hx010, Hy003, S[k], S[k])
+                adveccao[:, :] += np.einsum("iac,jbd,ab,cd->ij", Hx012, Hy001, S[k], S[k])
+                adveccao[:, :] -= np.einsum("iac,jbd,ab,cd->ij", Hx001, Hy012, S[k], S[k])
+                adveccao[:, :] -= np.einsum("iac,jbd,ab,cd->ij", Hx003, Hy010, S[k], S[k])
+                temp[:, :] = 2*dt*adveccao + np.einsum("iajb,ab->ij", Asystem, Santes)
+                Snext[:, :], _ = solve_system(newAsystem, temp, Sbound)
+                if np.any(np.isnan(Snext)):
                     raise ValueError(f"At time {tmesh[kk]}, S[k] has np.nan inside it")
+                Santes[:] = Satual[:]
+                Satual[:] = Snext[:]
+            S[k] = Satual[:]
             saver.write_at_time(timeb, "S", Lx.T @ S[k] @ Ly)
             # saver.write_at_time(Ut[k], "U", dLx.T @ S[k] @ Ly)
             # saver.write_at_time(Ut[k], "V", -Lx.T @ S[k] @ dLy)
@@ -290,24 +257,34 @@ wplot = -(ddLx.T @ S[k] @ Ly + Lx.T @ S[k] @ ddLy)  # W
 
 ploter.plot_all_fields(Nx, Ny, S=S[k])
 
-fig, axes = plt.subplots(4, 6, figsize=(16, 20))
-axes[0, 0].set_title(r"Left wall")
-axes[0, 1].set_title(r"$x = 0.5$")
-axes[0, 2].set_title(r"Right wall")
-axes[0, 3].set_title(r"Bottom wall")
-axes[0, 4].set_title(r"$y = 0.5$")
-axes[0, 5].set_title(r"Top wall")
-axes[0, 0].set_ylabel(r"$\psi$")
-axes[1, 0].set_ylabel(r"$u$")
-axes[2, 0].set_ylabel(r"$v$")
-axes[3, 0].set_ylabel(r"$w$")
+
+
+fig, axes = plt.subplots(3, 4, figsize=(16, 20))
+axes[0, 0].set_title(r"$s$")
+axes[0, 1].set_title(r"$u$")
+axes[0, 2].set_title(r"$v$")
+axes[0, 3].set_title(r"$w$")
+axes[0, 0].set_ylabel(r"Left wall")
+axes[1, 0].set_ylabel(r"$x=0.5$")
+axes[2, 0].set_ylabel(r"Right wall")
 for i, zplot in enumerate([splot, uplot, vplot, wplot]):
-    axes[i, 0].plot(xplot, zplot[0, :])
-    axes[i, 1].plot(yplot, zplot[xspot, :])
-    axes[i, 2].plot(xplot, zplot[-1, :])
-    axes[i, 3].plot(zplot[:, 0], yplot)
-    axes[i, 4].plot(zplot[:, yspot], yplot)
-    axes[i, 5].plot(zplot[:, -1], yplot)
+    axes[0, i].plot(zplot[0, :], yplot)
+    axes[1, i].plot(zplot[xspot, :], yplot)
+    axes[2, i].plot(zplot[-1, :], yplot)
+
+
+fig, axes = plt.subplots(3,4, figsize=(16, 20))
+axes[0, 0].set_title(r"$s$")
+axes[0, 1].set_title(r"$u$")
+axes[0, 2].set_title(r"$v$")
+axes[0, 3].set_title(r"$w$")
+axes[2, 0].set_ylabel(r"Bottom wall")
+axes[1, 0].set_ylabel(r"$y=0.5$")
+axes[0, 0].set_ylabel(r"Top wall")
+for i, zplot in enumerate([splot, uplot, vplot, wplot]):
+    axes[2, i].plot(xplot, zplot[:, 0])
+    axes[1, i].plot(xplot, zplot[:, yspot])
+    axes[0, i].plot(xplot, zplot[:, -1])
 
 
 plt.show()

@@ -5,6 +5,7 @@ from compmec import nurbs
 from helper import getD
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from typing import Tuple
+from femnavierhelper import *
 
 def plot_field(xmesh: Tuple[float], ymesh: Tuple[float], zvals: np.ndarray, ax = None, contour=True):
     xmesh = np.array(xmesh, dtype="float64")
@@ -31,7 +32,7 @@ def plot_field(xmesh: Tuple[float], ymesh: Tuple[float], zvals: np.ndarray, ax =
     return ax
 
 
-def plot_all_fields(Nx: nurbs.SplineBaseFunction, Ny: nurbs.SplineBaseFunction, S):
+def plot_all_fields(Nx: nurbs.SplineBaseFunction, Ny: nurbs.SplineBaseFunction, S, title: str=None):
     xplot = np.linspace(0, 1, 1025)
     yplot = np.linspace(0, 1, 1025)
     px, nx = Nx.degree, Nx.npts
@@ -57,13 +58,16 @@ def plot_all_fields(Nx: nurbs.SplineBaseFunction, Ny: nurbs.SplineBaseFunction, 
     plot_field(xplot, yplot, vplot, contour=True, ax=axes[2])
     wplot = -(ddLx.T @ S @ Ly + Lx.T @ S @ ddLy)  # W
     plot_field(xplot, yplot, wplot, contour=True, ax=axes[3])
-    # zplot = Lx.T @ P @ Ly
-    # plot_field(xplot, yplot, zplot, contour=True, ax=axes[4])
+    P = compute_pressure_from_current_line(Nx, Ny, S)
+    zplot = Lx.T @ P @ Ly
+    plot_field(xplot, yplot, zplot, contour=True, ax=axes[4])
     axes[0].set_title(r"Linha de corrente $S$")
     axes[1].set_title(r"Horizontal speed $u$")
     axes[2].set_title(r"Vertical speed $v$")
     axes[3].set_title(r"Vorticidade $W$")
     axes[4].set_title(r"Pressure $p$")
+    if title is not None:
+        fig.suptitle(title)
     for i in range(5):
         # axes[i].set_xlabel(r"Dimensao $x$")
         # axes[i].set_ylabel(r"Dimensao $y$")

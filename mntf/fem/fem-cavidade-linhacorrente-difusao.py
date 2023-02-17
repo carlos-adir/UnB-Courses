@@ -94,7 +94,7 @@ for l in range(nt):
     S[l, :, ny-2] = dSdytopctrlpoints  # dSdy(t, 1, y) = 0, right wall
 S[0, :, :] = Fit.spline_surface(Nx, Ny, Sinit, S[0])  # Initial conditions at T(0, x, y) = 0
 
-filename = "Rey%d_S-NOnonlinear.npy" % Re
+filename = "Rey%d_S-linhacorrente-Difusao.npy" % Re
 if file_exists(filename):
     print("Arquivo existe! Vamos ler")
     Sopened = np.load(filename)

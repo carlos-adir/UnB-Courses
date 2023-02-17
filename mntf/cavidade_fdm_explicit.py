@@ -3,12 +3,21 @@ from matplotlib import pyplot as plt
 from typing import Tuple
 from tqdm import tqdm
 from numba import jit
-from cavidadetovtk import Saver
 from compmec import nurbs
+from ploter import plot_animated_field
+
+
+def file_exists(filename: str) -> bool:
+    try:
+        file = open(filename, "r")
+        file.close()
+        return True
+    except FileNotFoundError:
+        return False
 
 np.set_printoptions(precision=2, suppress=True)
 
-nx, ny, nt = 31, 31, 1000001
+nx, ny, nt = 31, 31, 10001
 ntsave = 101
 xmin, xmax = 0, 1
 ymin, ymax = 0, 1
@@ -19,7 +28,7 @@ ymesh = np.linspace(ymin, ymax, ny)
 tsavemesh = np.linspace(tmin, tmax, ntsave)
 dx, dy = 1/(nx-1), 1/(ny-1)
 dt = (tmax-tmin)/(nt-1) 
-Re = 700  # Reynolds
+Re = 100  # Reynolds
 
 if dx < dt:
     raise ValueError("The value of dx is less than dt! dx = %.1e, dt = %.1e" % (dx, dt))
@@ -31,7 +40,7 @@ if 0.25*Re*dx**2 < dt:
 
 @np.vectorize
 def U(x):  # Condicao no topo
-    return 1
+    return np.sin(np.pi*x)**2
 
 def verify_has_nan_inf(value: np.ndarray, name: str):
     if not np.isfinite(value).all():
@@ -48,10 +57,6 @@ Pf = np.zeros((ntsave, nx, ny), dtype="float64")
 ustar = np.copy(u)
 vstar = np.copy(v)
 
-# dudx = np.empty((nx, ny), dtype="float64")
-# dudy = np.empty((nx, ny), dtype="float64")
-# dvdx = np.empty((nx, ny), dtype="float64")
-# dvdy = np.empty((nx, ny), dtype="float64")
 divu = np.empty((nx, ny), dtype="float64")
 divv = np.empty((nx, ny), dtype="float64")
 meanu = np.empty((nx, ny), dtype="float64")
@@ -131,7 +136,7 @@ def compute_matrix2D(matrix2D, diagon2D):
         matrix2D[i, 0:ny-1] = overdtdy*(vstar[i, 1:ny]-vstar[i, 0:ny-1])
     for j in range(0, ny-1):
         matrix2D[0:nx-1, j] += overdtdx*(ustar[1:nx, j]-ustar[0:nx-1, j])
-    matrix2D *= diagon2D
+    # matrix2D *= diagon2D
     return matrix2D
 
 # @jit(nopython=True)  
@@ -140,33 +145,40 @@ def compute_pressure(matrix2D, diagon2Dx, diagon2Dy, p):
     ITERMAX = 200
     iter = 0
     while True:
-        breaklooptolerance = True
-        for i in range(0, nx-1):
-            for j in range(0, ny-1):
-                R = matrix2D[i, j]
+        Rmax = 0
+        for i in range(1, nx-1):
+            for j in range(1, ny-1):
+                lamda = 0
+                R = overdtdx*(ustar[i+1, j]-ustar[i, j])
+                R += overdtdy*(vstar[i, j+1]-vstar[i, j])
                 if i == 0:
-                    R -= diagon2Dx[i, j]*(p[i+1, j] - p[i, j])
+                    lamda -= overdx2
+                    R -= overdx2*(p[i+1, j] - p[i, j])
                 elif i == nx-2:
-                    R -= diagon2Dx[i, j]*(p[i-1, j] - p[i, j])
+                    lamda -= overdx2
+                    R -= overdx2*(p[i-1, j] - p[i, j])
                 else:
-                    R -= diagon2Dx[i, j]*(p[i-1, j] - 2*p[i, j] + p[i+1, j])
+                    lamda -= 2*overdx2
+                    R -= overdx2*(p[i-1, j] - 2*p[i, j] + p[i+1, j])
                 if j == 0:
-                    R -= diagon2Dy[i, j]*(p[i, j+1] - p[i, j])
+                    lamda -= overdy2
+                    R -= overdy2*(p[i, j+1] - p[i, j])
                 elif j == ny-2:
-                    R -= diagon2Dy[i, j]*(p[i, j-1] - p[i, j])
+                    lamda -= overdy2
+                    R -= overdy2*(p[i, j-1] - p[i, j])
                 else:
-                    R -= diagon2Dy[i, j]*(p[i, j-1] - 2*p[i, j] + p[i, j+1])
+                    lamda -= 2*overdy2
+                    R -= overdy2*(p[i, j-1] - 2*p[i, j] + p[i, j+1])
+                R /= lamda
                 p[i, j] += R
-                print("abs(R) = %.2e"%np.abs(R))
-                breaklooptolerance *= np.abs(R) < TOLERANCE
-        if breaklooptolerance:
+                if np.abs(R) > Rmax:
+                    Rmax = np.abs(R)
+        if Rmax < TOLERANCE:
             break
         iter += 1
         if iter == ITERMAX:
             error = "Maximum iteration " + str(ITERMAX) + " reached to compute pressure"
-            print(error)
-            # break
-            raise ValueError
+            raise ValueError(error)
     for i in range(nx-1):
         p[i, -1] = p[i, 0]
     p[0:nx-1, ny-1] = p[0:nx-1, ny-2]
@@ -187,52 +199,63 @@ def compute_newv(vstar, p, v):
 
 
 if __name__ == "__main__":
-    diagon2D, diagon2Dx, diagon2Dy = init_diagon2D(nx, ny, overdx2, overdy2)
-    u.fill(0)
-    v.fill(0)
-    p.fill(0)
-
-    # Apenas para compilar e nao tomar tempo:
-    compute_ustar(u, divu, meanv, ustar, np.zeros(xmesh.shape))
-    compute_vstar(v, divv, meanu, vstar)
-    matrix2D = compute_matrix2D(matrix2D, diagon2D)
-    p = compute_pressure(matrix2D, diagon2Dx, diagon2Dy, p)
-    compute_newu(ustar, p, u)
-    compute_newv(vstar, p, v)
-
-    # Agora vamos ao calculo
-    Uupper = 2*U(xmesh)
-    u[:,ny-1] = Uupper[:]  # Boundary condition
-    try:
-        Uf[0] = 0.5*(u[:, 1:]+u[:, :-1])
-        Vf[0] = 0.5*(v[1:, :]+v[:-1, :])
-        Pf[0] = 0.25*(p[1:, 1:]+p[:-1, :-1]+p[:-1, 1:]+p[1:, :-1])
-        counter_save = 0
-        for k in tqdm(range(nt-1)):
-            compute_ustar(u, divu, meanv, ustar, Uupper)
-            compute_vstar(v, divv, meanu, vstar)
-            compute_matrix2D(matrix2D, diagon2D)
-            p = compute_pressure(matrix2D, diagon2Dx, diagon2Dy, p)
-            compute_newu(ustar, p, u)
-            compute_newv(vstar, p, v)
-            if k*dt > tsavemesh[counter_save+1]:
-                Uf[counter_save+1] = 0.5*(u[:, 1:]+u[:, :-1])
-                Vf[counter_save+1] = 0.5*(v[1:, :]+v[:-1, :])
-                Pf[counter_save+1] = 0.25*(p[1:, 1:]+p[:-1, :-1]+p[:-1, 1:]+p[1:, :-1])
-                counter_save += 1
-    except KeyboardInterrupt as error:
-        pass
-    except Exception as error:
-        print("Exited at time: %.2f/%.2f" % (tmin+k*dt, tmax))
-        print("Error = ", error)
-    finally:
+    filename = "cavidade-fdm-explicit-Re%.1e-nx%dny%dnt%dtmax%.1edt%.1e"%(Re, nx, ny, ntsave, tmax, dt)
+    compute_new = True
+    if file_exists(filename):
+        compute_new = False
+        arrays = np.load(filename)
+        if not np.allclose(xmesh, arrays["xmesh"]):
+            compute_new = True
+        if not np.allclose(ymesh, arrays["ymesh"]):
+            compute_new = True
+        if not np.allclose(tsavemesh, arrays["tmesh"]):
+            compute_new = True
+        if not compute_new:
+            Uf[:, :, :] = arrays["U"]
+            Vf[:, :, :] = arrays["V"]
+            Pf[:, :, :] = arrays["P"]
         
-        filename = "data_%dRe.xdmf"%int(round(Re))
-        file = Saver(filename)
-        file.Ux = np.linspace(xmin, xmax, nx)
-        file.Uy = np.linspace(ymin, ymax, ny)
-        file.Ut = np.linspace(tmin, tmax, ntsave)
-        file.U = Uf
-        file.V = Vf
-        file.P = Pf
-        file.save()
+    if compute_new:   
+        diagon2D, diagon2Dx, diagon2Dy = init_diagon2D(nx, ny, overdx2, overdy2)
+        u.fill(0)
+        v.fill(0)
+        p.fill(0)
+
+        # Apenas para compilar e nao tomar tempo:
+        compute_ustar(u, divu, meanv, ustar, np.zeros(xmesh.shape))
+        compute_vstar(v, divv, meanu, vstar)
+        matrix2D = compute_matrix2D(matrix2D, diagon2D)
+        p = compute_pressure(matrix2D, diagon2Dx, diagon2Dy, p)
+        compute_newu(ustar, p, u)
+        compute_newv(vstar, p, v)
+
+        # Agora vamos ao calculo
+        Uupper = 2*U(xmesh)
+        u[:,ny-1] = Uupper[:]  # Boundary condition
+        try:
+            Uf[0] = 0.5*(u[:, 1:]+u[:, :-1])
+            Vf[0] = 0.5*(v[1:, :]+v[:-1, :])
+            Pf[0] = 0.25*(p[1:, 1:]+p[:-1, :-1]+p[:-1, 1:]+p[1:, :-1])
+            counter_save = 0
+            for k in tqdm(range(nt-1)):
+                compute_ustar(u, divu, meanv, ustar, Uupper)
+                compute_vstar(v, divv, meanu, vstar)
+                compute_matrix2D(matrix2D, diagon2D)
+                p = compute_pressure(matrix2D, diagon2Dx, diagon2Dy, p)
+                compute_newu(ustar, p, u)
+                compute_newv(vstar, p, v)
+                if k*dt > tsavemesh[counter_save+1]:
+                    Uf[counter_save+1] = 0.5*(u[:, 1:]+u[:, :-1])
+                    Vf[counter_save+1] = 0.5*(v[1:, :]+v[:-1, :])
+                    Pf[counter_save+1] = 0.25*(p[1:, 1:]+p[:-1, :-1]+p[:-1, 1:]+p[1:, :-1])
+                    counter_save += 1
+        except KeyboardInterrupt as error:
+            pass
+        except Exception as error:
+            print("Exited at time: %.2f/%.2f" % (tmin+k*dt, tmax))
+            print("Error = ", error)
+            raise error
+        finally:
+            np.savez(filename, xmesh=xmesh, ymesh=ymesh, tmesh=tsavemesh, U = Uf, V = Vf, P = Pf)
+    anim = plot_animated_field(tsavemesh, xmesh, ymesh, U=Uf, V=Vf, P=Pf)
+    plt.show()

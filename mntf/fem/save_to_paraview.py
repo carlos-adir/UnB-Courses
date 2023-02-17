@@ -6,12 +6,12 @@ class SaveParaview:
     def __init__(self):
         self.xmesh = np.linspace(0, 1, 11)
         self.ymesh = np.linspace(0, 1, 11)
-        self.tmesh = np.linspace(0, 1, 11)
         self.filename = "asd.xdmf"
         self.fields = {}
+        self.writer = None
 
     def create_mesh(self):
-        nx, ny, nt = len(self.xmesh), len(self.ymesh), len(self.tmesh)
+        nx, ny = len(self.xmesh), len(self.ymesh)
         self.points = []
         quadcells = []
         indexs = {}
@@ -31,21 +31,25 @@ class SaveParaview:
                 quadcells.append(newquadcell)
         self.cells = [ ("quad", quadcells) ]
 
-    def create_point_data(self):
-        # values.shape = (nt, nx, ny)
-        self.points_timed_data = []
-        for k, tk in enumerate(self.tmesh):
-            newpointdata = {}
-            for name, field in self.fields.items():
-                newpointdata[name] = field[k].flatten()
-            self.points_timed_data.append(newpointdata)
 
-    def save(self):
+    def open_writer(self):
         self.create_mesh()
-        self.create_point_data()
-        print("  # Saving inside function")
-        with meshio.xdmf.TimeSeriesWriter(self.filename) as writer:
-            writer.write_points_cells(self.points, self.cells)
-            for k, tk in enumerate(tqdm(self.tmesh)):
-                writer.write_data(tk, point_data=self.points_timed_data[k])
+        print("    # Opening xdmf writer")
+        self.writer = meshio.xdmf.TimeSeriesWriter(self.filename)
+        self.writer.__enter__()
+        self.writer.write_points_cells(self.points, self.cells)
+
+    def close_writer(self):
+        print("    # Closing xdmf writer")
+        self.writer.__exit__()
+        self.writer = None
+
+    def write_at_time(self, tk: float, name: str, field: np.ndarray):
+        if self.writer is None:
+            raise ValueError("The file must be opened to write on it")
+        point_data = {name: field.flatten()}
+        self.writer.write_data(tk, point_data=point_data)
+
+                
+
             
