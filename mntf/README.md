@@ -22,7 +22,7 @@ Até chegarmos ao ponto de resolver a EDP, é necessário aprender sobre
 
 Como trabalho final, foi colocado resolver o problema da cavidade bidimensional quadrada
 
-<img src="https://raw.githubusercontent.com/carlos-adir/UnB-Courses/blob/main/mntf/img/liddrivencavity.png" width="100%">
+<img src="https://raw.githubusercontent.com/carlos-adir/UnB-Courses/main/mntf/img/liddrivencavity.png" width="100%">
 
 Daí pra resolver o problema, tem dois arquivos:
 
